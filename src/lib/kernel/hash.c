@@ -205,9 +205,7 @@ struct hash_elem* hash_next(struct hash_iterator* i) {
 /* Returns the current element in the hash table iteration, or a
    null pointer at the end of the table.  Undefined behavior
    after calling hash_first() but before hash_next(). */
-struct hash_elem* hash_cur(struct hash_iterator* i) {
-  return i->elem;
-}
+struct hash_elem* hash_cur(struct hash_iterator* i) { return i->elem; }
 
 /* Returns the number of elements in H. */
 size_t hash_size(struct hash* h) { return h->elem_cnt; }

@@ -197,8 +197,7 @@ static void relay(int sock) {
   }
 }
 
-static void sigchld_handler(int signo __attribute__((unused))) { /* Nothing to do. */
-}
+static void sigchld_handler(int signo __attribute__((unused))) { /* Nothing to do. */ }
 
 int main(int argc __attribute__((unused)), char* argv[]) {
   pid_t pid;

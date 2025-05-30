@@ -54,9 +54,7 @@ void block_set_role(enum block_type role, struct block* block) {
 
 /* Returns the first block device in kernel probe order, or a
    null pointer if no block devices are registered. */
-struct block* block_first(void) {
-  return list_elem_to_block(list_begin(&all_blocks));
-}
+struct block* block_first(void) { return list_elem_to_block(list_begin(&all_blocks)); }
 
 /* Returns the block device following BLOCK in kernel probe
    order, or a null pointer if BLOCK is the last block device. */
