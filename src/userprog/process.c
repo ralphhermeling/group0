@@ -20,6 +20,8 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+#define MAX_ARGS 32
+
 static struct semaphore temporary;
 static thread_func start_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
@@ -69,6 +71,67 @@ pid_t process_execute(const char* file_name) {
   return tid;
 }
 
+static void pass_arguments(intr_frame* if_, char* file_name) {
+  /* Make a copy of FILE_NAME.
+     Otherwise there's a race between the caller and strtok_r. */
+  fn_copy = palloc_get_page(0);
+  ASSERT(fn_copy != NULL);
+  strlcpy(fn_copy, file_name, PGSIZE);
+
+  char* args[MAX_ARGS];
+  int argc = 0;
+
+  /* Tokenize file name by splitting on whitespace */
+  char *token, *save_ptr;
+
+  token = token = strtok_r(file_name, " ", &save_ptr);
+  while (token != NULL && argc < MAX_ARGS) {
+    args[argc++] = token;
+    token = strtok_r(NULL, " ", &save_ptr)
+  }
+
+  void* user_esp = (void*)if_->esp;
+  char* arg_ptrs[MAX_ARGS];
+
+  /* Push arguments onto stack in reverse */
+  for (int i = argc - 1; i >= 0; i--) {
+    size_t len = strlen(args[i]) + 1;
+    user_esp -= len;
+    memcpy(user_esp, args[i], len);
+    arg_ptrs[i] = user_esp;
+  }
+
+  /* Word-align to 4-byte boundary */
+  user_esp = (void*)((uintptr_t)user_esp & 0xfffffffc);
+
+  /* Push null sentinel */
+  user_esp -= sizeof(char*);
+  *(char**)user_esp = NULL;
+
+  /* Push pointers to each arg string */
+  for (int i = argc - 1; i >= 0; i--) {
+    user_esp -= sizeof(char*);
+    *(char**)user_esp = arg_ptrs[i];
+  }
+
+  /* Push pointer to argv (char **) */
+  char** argv = (char**)user_esp;
+  user_esp -= sizeof(char**);
+  *(char***)user_esp = argv;
+
+  /* Push argc */
+  user_esp -= sizeof(int);
+  *(int*)user_esp = argc;
+
+  /* Push fake return address */
+  user_esp -= sizeof(void*);
+  *(void**)user_esp = 0;
+
+  if_->esp = (void*)user_esp;
+
+  palloc_free_page(fn_copy);
+}
+
 /* A thread function that loads a user process and starts it
    running. */
 static void start_process(void* file_name_) {
@@ -100,6 +163,10 @@ static void start_process(void* file_name_) {
     if_.cs = SEL_UCSEG;
     if_.eflags = FLAG_IF | FLAG_MBS;
     success = load(file_name, &if_.eip, &if_.esp);
+  }
+
+  if (success) {
+    pass_arguments(&_if, file_name);
   }
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
