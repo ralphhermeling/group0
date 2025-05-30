@@ -21,6 +21,7 @@
 #include "threads/vaddr.h"
 
 #define MAX_ARGS 32
+#define MAX_PROGRAM_NAME_LENGTH 64
 
 static struct semaphore temporary;
 static thread_func start_process NO_RETURN;
@@ -71,10 +72,9 @@ pid_t process_execute(const char* file_name) {
   return tid;
 }
 
-static void pass_arguments(intr_frame* if_, char* file_name) {
-  /* Make a copy of FILE_NAME.
-     Otherwise there's a race between the caller and strtok_r. */
-  fn_copy = palloc_get_page(0);
+static void pass_arguments(struct intr_frame* if_, char* file_name) {
+  /* Make a copy of FILE_NAME to safely tokenize it. */
+  char* fn_copy = palloc_get_page(0);
   ASSERT(fn_copy != NULL);
   strlcpy(fn_copy, file_name, PGSIZE);
 
@@ -83,11 +83,10 @@ static void pass_arguments(intr_frame* if_, char* file_name) {
 
   /* Tokenize file name by splitting on whitespace */
   char *token, *save_ptr;
-
-  token = token = strtok_r(file_name, " ", &save_ptr);
+  token = strtok_r(file_name, " ", &save_ptr);
   while (token != NULL && argc < MAX_ARGS) {
     args[argc++] = token;
-    token = strtok_r(NULL, " ", &save_ptr)
+    token = strtok_r(NULL, " ", &save_ptr);
   }
 
   void* user_esp = (void*)if_->esp;
@@ -101,35 +100,56 @@ static void pass_arguments(intr_frame* if_, char* file_name) {
     arg_ptrs[i] = user_esp;
   }
 
-  /* Word-align to 4-byte boundary */
-  user_esp = (void*)((uintptr_t)user_esp & 0xfffffffc);
-
-  /* Push null sentinel */
+  /* Push null sentinel (argv[argc] = NULL) */
   user_esp -= sizeof(char*);
   *(char**)user_esp = NULL;
 
-  /* Push pointers to each arg string */
+  /* Push pointers to each argument string */
   for (int i = argc - 1; i >= 0; i--) {
     user_esp -= sizeof(char*);
     *(char**)user_esp = arg_ptrs[i];
   }
 
-  /* Push pointer to argv (char **) */
+  /* Push argv (char **) */
   char** argv = (char**)user_esp;
   user_esp -= sizeof(char**);
   *(char***)user_esp = argv;
 
-  /* Push argc */
+  /* Push argc (int) */
   user_esp -= sizeof(int);
   *(int*)user_esp = argc;
 
-  /* Push fake return address */
-  user_esp -= sizeof(void*);
+  /* align %esp after pushing return address */
+  user_esp -= sizeof(void*); // fake return address
   *(void**)user_esp = 0;
 
-  if_->esp = (void*)user_esp;
+  /* Align to 16-byte boundary after pushing return address */
+  uintptr_t esp_val = (uintptr_t)user_esp;
+  size_t misalignment = esp_val % 16;
+  if (misalignment != 0) {
+    size_t pad = 16 - misalignment;
+    user_esp -= pad;
+    memset(user_esp, 0, pad);
+  }
+
+  /* Set final stack pointer */
+  if_->esp = user_esp;
 
   palloc_free_page(fn_copy);
+}
+
+static void extract_program_name(char* file_name, char* program_name_out) {
+  char buffer[128];
+  strlcpy(buffer, file_name, sizeof(buffer));
+
+  char* save_ptr;
+  char* token;
+  token = strtok_r(buffer, " ", &save_ptr);
+  if (token != NULL) {
+    strlcpy(program_name_out, token, MAX_PROGRAM_NAME_LENGTH);
+  } else {
+    program_name_out[0] = '\0';
+  }
 }
 
 /* A thread function that loads a user process and starts it
@@ -162,11 +182,13 @@ static void start_process(void* file_name_) {
     if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
     if_.cs = SEL_UCSEG;
     if_.eflags = FLAG_IF | FLAG_MBS;
-    success = load(file_name, &if_.eip, &if_.esp);
+    char program_name[MAX_PROGRAM_NAME_LENGTH];
+    extract_program_name(file_name, program_name);
+    success = load(program_name, &if_.eip, &if_.esp);
   }
 
   if (success) {
-    pass_arguments(&_if, file_name);
+    pass_arguments(&if_, file_name);
   }
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
