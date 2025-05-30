@@ -100,6 +100,9 @@ static void pass_arguments(struct intr_frame* if_, char* file_name) {
     arg_ptrs[i] = user_esp;
   }
 
+  /* Word-align */
+  user_esp = (void*)((uintptr_t)user_esp & 0xfffffffc);
+
   /* Push null sentinel (argv[argc] = NULL) */
   user_esp -= sizeof(char*);
   *(char**)user_esp = NULL;
@@ -122,15 +125,6 @@ static void pass_arguments(struct intr_frame* if_, char* file_name) {
   /* align %esp after pushing return address */
   user_esp -= sizeof(void*); // fake return address
   *(void**)user_esp = 0;
-
-  /* Align to 16-byte boundary after pushing return address */
-  uintptr_t esp_val = (uintptr_t)user_esp;
-  size_t misalignment = esp_val % 16;
-  if (misalignment != 0) {
-    size_t pad = 16 - misalignment;
-    user_esp -= pad;
-    memset(user_esp, 0, pad);
-  }
 
   /* Set final stack pointer */
   if_->esp = user_esp;
