@@ -1,9 +1,11 @@
 #include "userprog/syscall.h"
 #include <stdio.h>
 #include <syscall-nr.h>
+#include "process.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "userprog/process.h"
+#include "threads/vaddr.h"
 
 static void syscall_handler(struct intr_frame*);
 
@@ -25,5 +27,24 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
     f->eax = args[1];
     printf("%s: exit(%d)\n", thread_current()->pcb->process_name, args[1]);
     process_exit();
+  } else if (args[0] == SYS_WRITE) {
+    int fd = args[1];
+    const char* buffer = (const char*)args[2];
+    unsigned size = args[3];
+
+    if (!is_user_vaddr(args) || !is_user_vaddr(args + 3)) {
+      process_exit();
+    }
+
+    if (!is_user_vaddr(buffer) || !is_user_vaddr(buffer + size - 1)) {
+      process_exit();
+    }
+
+    /* Only support STDOUT for now */
+    ASSERT(fd == 1);
+
+    /* Write number of size character of buffer to STDOUT */
+    putbuf(buffer, size);
+    f->eax = size;
   }
 }
