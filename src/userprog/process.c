@@ -158,6 +158,9 @@ static void start_process(void* file_name_) {
   struct process* new_pcb = malloc(sizeof(struct process));
   success = pcb_success = new_pcb != NULL;
 
+  char program_name[MAX_PROGRAM_NAME_LENGTH];
+  extract_program_name(file_name, program_name);
+
   /* Initialize process control block */
   if (success) {
     // Ensure that timer_interrupt() -> schedule() -> process_activate()
@@ -167,7 +170,7 @@ static void start_process(void* file_name_) {
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
-    strlcpy(t->pcb->process_name, t->name, sizeof t->name);
+    strlcpy(t->pcb->process_name, program_name, MAX_PROGRAM_NAME_LENGTH);
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -176,8 +179,6 @@ static void start_process(void* file_name_) {
     if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
     if_.cs = SEL_UCSEG;
     if_.eflags = FLAG_IF | FLAG_MBS;
-    char program_name[MAX_PROGRAM_NAME_LENGTH];
-    extract_program_name(file_name, program_name);
     success = load(program_name, &if_.eip, &if_.esp);
   }
 
