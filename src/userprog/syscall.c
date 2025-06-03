@@ -67,6 +67,8 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
   } else if (args[0] == SYS_WRITE) {
     if (!get_user_args(f->esp + NUM_BYTES_ARGUMENT_STACK, &args[1], 3)) {
       printf("%s: exit(%d)\n", thread_current()->pcb->process_name, -1);
+      f->eax = -1;
+      process_exit();
     }
     int fd = args[1];
 
@@ -83,6 +85,8 @@ static void syscall_handler(struct intr_frame* f UNUSED) {
   } else if (args[0] == SYS_PRACTICE) {
     if (!get_user_args(f->esp + NUM_BYTES_ARGUMENT_STACK, &args[1], 1)) {
       printf("%s: exit(%d)\n", thread_current()->pcb->process_name, -1);
+      f->eax = -1;
+      process_exit();
     }
     int i = args[1];
 
