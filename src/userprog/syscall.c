@@ -15,6 +15,10 @@
 static void syscall_handler(struct intr_frame*);
 
 void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
+void syscall_exit(int status) {
+  printf("Exiting thread with status: %d", status);
+  thread_exit();
+}
 
 static bool validate_user_buffer(const void* buffer, size_t size) {
   uint8_t* start = (uint8_t*)buffer;
