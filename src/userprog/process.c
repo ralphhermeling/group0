@@ -29,6 +29,11 @@ static thread_func start_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
 bool setup_thread(void (**eip)(void), void** esp);
+struct process_load_info {
+  char* file_name; /* Command line to execute */
+  struct semaphore* load_sema;
+  bool* load_success;
+};
 
 /* Initializes user programs in the system by ensuring the main
    thread has a minimal PCB so that it can execute and wait for
@@ -66,14 +71,29 @@ pid_t process_execute(const char* file_name) {
     return TID_ERROR;
   strlcpy(fn_copy, file_name, PGSIZE);
 
+  bool load_success = false;
+  struct semaphore load_sema;
+  struct process_load_info info;
+
+  sema_init(&load_sema, 0);
+  info.file_name = fn_copy;
+  info.load_sema = &load_sema;
+  info.load_success = &load_success;
+
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
-  if (tid == TID_ERROR)
+  tid = thread_create(file_name, PRI_DEFAULT, start_process, &info);
+  if (tid == TID_ERROR) {
     palloc_free_page(fn_copy);
-  return tid;
+    return -1;
+  }
+
+  /* Wait for child process program to load */
+  sema_down(&load_sema);
+  /* Check result */
+  return load_success ? tid : -1;
 }
 
-void load_args(char* file_name, void** esp) {
+static void load_args(char* file_name, void** esp) {
   bool in = false; /* whether in the process of copy a word */
   int argc_ = 0;
 
@@ -214,24 +234,11 @@ static void pass_arguments(struct intr_frame* if_, char* file_name) {
   palloc_free_page(fn_copy);
 }
 
-static void extract_program_name(char* file_name, char* program_name_out) {
-  char buffer[128];
-  strlcpy(buffer, file_name, sizeof(buffer));
-
-  char* save_ptr;
-  char* token;
-  token = strtok_r(buffer, " ", &save_ptr);
-  if (token != NULL) {
-    strlcpy(program_name_out, token, MAX_PROGRAM_NAME_LENGTH);
-  } else {
-    program_name_out[0] = '\0';
-  }
-}
-
 /* A thread function that loads a user process and starts it
    running. */
-static void start_process(void* file_name_) {
-  char* argv = (char*)file_name_;
+static void start_process(void* load_info) {
+  struct process_load_info* info = (struct process_load_info*)load_info;
+  char* argv = info->file_name;
 
   /* cut the argv to get program name
    * "program arg1 arg2" -> "program" */
@@ -281,6 +288,9 @@ static void start_process(void* file_name_) {
     t->pcb = NULL;
     free(pcb_to_free);
   }
+
+  *(info->load_success) = success;
+  sema_up(info->load_sema);
 
   /* Clean up. Exit on failure or jump to userspace */
   palloc_free_page(argv);
