@@ -100,8 +100,19 @@ static void pass_arguments(struct intr_frame* if_, char* file_name) {
     arg_ptrs[i] = user_esp;
   }
 
-  /* Word-align */
-  user_esp = (void*)((uintptr_t)user_esp & 0xfffffffc);
+  /* Calculate total space needed for fixed-size items */
+  size_t fixed_size = sizeof(char*) +        /* NULL sentinel */
+                      argc * sizeof(char*) + /* arg pointers */
+                      sizeof(char**) +       /* argv */
+                      sizeof(int) +          /* argc */
+                      sizeof(void*);         /* return address */
+
+  // printf("Before alignment: user_esp = %p\n", user_esp);
+  // printf("Fixed size items need: %zu bytes\n", fixed_size);
+
+  /* Align after accounting for fixed-size items */
+  user_esp = (void*)(((uintptr_t)user_esp - fixed_size) & 0xfffffff0);
+  // printf("After alignment: user_esp = %p\n", user_esp);
 
   /* Push null sentinel (argv[argc] = NULL) */
   user_esp -= sizeof(char*);
@@ -122,9 +133,11 @@ static void pass_arguments(struct intr_frame* if_, char* file_name) {
   user_esp -= sizeof(int);
   *(int*)user_esp = argc;
 
-  /* align %esp after pushing return address */
   user_esp -= sizeof(void*); // fake return address
   *(void**)user_esp = 0;
+
+  // printf("Final user_esp: %p\n", user_esp);
+  // printf("Final alignment check: last nibble = 0x%x\n", (uintptr_t)user_esp & 0xf);
 
   /* Set final stack pointer */
   if_->esp = user_esp;
