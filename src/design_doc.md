@@ -25,6 +25,9 @@ checks the string exists entirely below PHYS_BASE.
 - add bool in_syscall property to struct thread 
 Used to determine whether pagefault in kernel mode occurs during syscall.
 
+- add void syscall_exit(int status) to userprog/syscall.h
+Used to terminate current user program
+
 Algorithms
 For the validate_user_buffer function I would check the delta between PHYS_BASE and buffer.
 Then I would check whether buffer is valid user address and whether length is larger than the delta.
@@ -38,6 +41,8 @@ In src/userprog/exception I would check when a page fault occurs the following a
 - fault address is a valid virtual user address
 - in_syscall
 Then I know the page fault is because of unmapped memory and then I exit the user program with status -1.
+
+For syscall_exit I would use the printf function to print out the exit code and then call process_exit.
 
 Synchronization
 The new bool in_syscall is defined in USERPROG and it is accessed in the kernel during a system call and when a pagefault is handled in exception.c.

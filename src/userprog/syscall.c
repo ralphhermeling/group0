@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <syscall-nr.h>
+#include "devices/shutdown.h"
 #include "process.h"
 #include "string.h"
 #include "threads/interrupt.h"
@@ -101,6 +102,9 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_PRACTICE:
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
       f->eax = (int)args[1] + 1;
+      break;
+    case SYS_HALT:
+      shutdown_power_off();
       break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);
