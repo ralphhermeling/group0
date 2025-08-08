@@ -1,4 +1,5 @@
 #include "userprog/process.h"
+#include <ctype.h>
 #include <debug.h>
 #include <inttypes.h>
 #include <round.h>
@@ -72,6 +73,67 @@ pid_t process_execute(const char* file_name) {
   return tid;
 }
 
+void load_args(char* file_name, void** esp) {
+  bool in = false; /* whether in the process of copy a word */
+  int argc_ = 0;
+
+  /*           
+  0xbffffffc   argv[3][...]    bar\0       char[4]
+  0xbffffff8   argv[2][...]    foo\0       char[4]
+  0xbffffff5   argv[1][...]    -l\0        char[3]
+  0xbfffffed   argv[0][...]    /bin/ls\0   char[8]
+  0xbfffffec   stack-align       0         uint8_t
+  0xbfffffe8   argv[4]           0         char *
+  0xbfffffe4   argv[3]        0xbffffffc   char *
+  0xbfffffe0   argv[2]        0xbffffff8   char *
+  0xbfffffdc   argv[1]        0xbffffff5   char *
+  0xbfffffd8   argv[0]        0xbfffffed   char *
+  0xbfffffd4   argv           0xbfffffd8   char **
+  0xbfffffd0   argc              4         int
+  0xbfffffcc   return address    0         void (*) ()
+  */
+
+  /* load argvs on stack */
+  char* iter = *esp;
+  for (int i = strlen(file_name) - 1; i >= 0; i--) {
+    char c = file_name[i];
+    if (!isspace(c)) {
+      if (!in) { /* enter new word */
+        *(--iter) = '\0';
+        argc_ += 1;
+        in = !in;
+      }
+      *(--iter) = c;
+    } else { /* meet white space */
+      if (in)
+        in = !in;
+    }
+  }
+
+  /* align the stack by 4byte */
+  uintptr_t* argv_ = (uintptr_t*)(iter - (4 - ((char*)*esp - iter) % 4));
+
+  /* align the stack by 16byte */
+  argv_ -= ((uintptr_t)(argv_ - (argc_ + 3)) % 16) / 4;
+
+  /* argv[argc] = 0 */
+  *(--argv_) = 0;
+  argv_ -= argc_;
+  for (int i = 0; i < argc_; i++) {
+    argv_[i] = (uintptr_t)iter;
+    /* reach next argv */
+    while (*(iter++)) {
+    }
+  }
+
+  argv_ -= 1;                      /* *argv = argv+1 */
+  *argv_ = (uintptr_t)(argv_ + 1); /* argv */
+  *(--argv_) = argc_;              /* argc */
+  *(--argv_) = 0;                  /* return addr = 0 */
+
+  *esp = argv_;
+}
+
 static void pass_arguments(struct intr_frame* if_, char* file_name) {
   /* Make a copy of FILE_NAME to safely tokenize it. */
   char* fn_copy = palloc_get_page(0);
@@ -100,19 +162,25 @@ static void pass_arguments(struct intr_frame* if_, char* file_name) {
     arg_ptrs[i] = user_esp;
   }
 
-  /* Calculate total space needed for fixed-size items */
-  size_t fixed_size = sizeof(char*) +        /* NULL sentinel */
-                      argc * sizeof(char*) + /* arg pointers */
-                      sizeof(char**) +       /* argv */
-                      sizeof(int) +          /* argc */
-                      sizeof(void*);         /* return address */
+  /* Word-align to 4-byte boundary */
+  user_esp = (void*)((uintptr_t)user_esp & 0xfffffffc);
+  printf("After word alignment: user_esp = %p\n", user_esp);
 
-  // printf("Before alignment: user_esp = %p\n", user_esp);
-  // printf("Fixed size items need: %zu bytes\n", fixed_size);
+  /* Calculate space needed for remaining items */
+  size_t remaining_size = sizeof(char*) +        /* NULL sentinel */
+                          argc * sizeof(char*) + /* arg pointers */
+                          sizeof(char**) +       /* argv */
+                          sizeof(int) +          /* argc */
+                          sizeof(void*);         /* return address */
 
-  /* Align after accounting for fixed-size items */
-  user_esp = (void*)(((uintptr_t)user_esp - fixed_size) & 0xfffffff0);
-  // printf("After alignment: user_esp = %p\n", user_esp);
+  /* Adjust to ensure final stack pointer allows 16-byte aligned allocations */
+  uintptr_t target_esp = (uintptr_t)user_esp - remaining_size;
+  if ((target_esp & 0xf) != 0) {
+    size_t padding = 16 - (target_esp & 0xf);
+    user_esp -= padding;
+    printf("Added %zu bytes padding for alignment\n", padding);
+  }
+  printf("Stack pointer after alignment adjustment: %p\n", user_esp);
 
   /* Push null sentinel (argv[argc] = NULL) */
   user_esp -= sizeof(char*);
@@ -133,11 +201,12 @@ static void pass_arguments(struct intr_frame* if_, char* file_name) {
   user_esp -= sizeof(int);
   *(int*)user_esp = argc;
 
-  user_esp -= sizeof(void*); // fake return address
+  /* Push fake return address */
+  user_esp -= sizeof(void*);
   *(void**)user_esp = 0;
 
-  // printf("Final user_esp: %p\n", user_esp);
-  // printf("Final alignment check: last nibble = 0x%x\n", (uintptr_t)user_esp & 0xf);
+  printf("Final user_esp: %p\n", user_esp);
+  printf("Final alignment check: last nibble = 0x%x\n", (uintptr_t)user_esp & 0xf);
 
   /* Set final stack pointer */
   if_->esp = user_esp;
@@ -162,7 +231,16 @@ static void extract_program_name(char* file_name, char* program_name_out) {
 /* A thread function that loads a user process and starts it
    running. */
 static void start_process(void* file_name_) {
-  char* file_name = (char*)file_name_;
+  char* argv = (char*)file_name_;
+
+  /* cut the argv to get program name
+   * "program arg1 arg2" -> "program" */
+  int len = 0;
+  while (!isspace(argv[len]) && argv[len] != '\0')
+    len++;
+  char* file_name = malloc(len + 1);
+  strlcpy(file_name, argv, len + 1);
+
   struct thread* t = thread_current();
   struct intr_frame if_;
   bool success, pcb_success;
@@ -170,9 +248,6 @@ static void start_process(void* file_name_) {
   /* Allocate process control block */
   struct process* new_pcb = malloc(sizeof(struct process));
   success = pcb_success = new_pcb != NULL;
-
-  char program_name[MAX_PROGRAM_NAME_LENGTH];
-  extract_program_name(file_name, program_name);
 
   /* Initialize process control block */
   if (success) {
@@ -183,7 +258,7 @@ static void start_process(void* file_name_) {
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
-    strlcpy(t->pcb->process_name, program_name, MAX_PROGRAM_NAME_LENGTH);
+    strlcpy(t->pcb->process_name, file_name, MAX_PROGRAM_NAME_LENGTH);
   }
 
   /* Initialize interrupt frame and load executable. */
@@ -192,12 +267,10 @@ static void start_process(void* file_name_) {
     if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
     if_.cs = SEL_UCSEG;
     if_.eflags = FLAG_IF | FLAG_MBS;
-    success = load(program_name, &if_.eip, &if_.esp);
+    success = load(file_name, &if_.eip, &if_.esp);
   }
 
-  if (success) {
-    pass_arguments(&if_, file_name);
-  }
+  load_args(argv, &if_.esp);
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
   if (!success && pcb_success) {
@@ -210,7 +283,8 @@ static void start_process(void* file_name_) {
   }
 
   /* Clean up. Exit on failure or jump to userspace */
-  palloc_free_page(file_name);
+  palloc_free_page(argv);
+  free(file_name);
   if (!success) {
     sema_up(&temporary);
     thread_exit();

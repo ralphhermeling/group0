@@ -25,6 +25,8 @@ void NO_INLINE check_stack_alignment(void) {
    * allocated on the stack, to a 16-byte boundary.
    */
   char buffer[32] __attribute__((aligned(16)));
+  // msg("buffer address: %p", &buffer[0]);
+  // msg("current esp: %p", __builtin_frame_address(0));
   check_pointer_alignment(&buffer[0]);
 }
 
