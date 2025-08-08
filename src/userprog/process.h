@@ -1,6 +1,7 @@
 #ifndef USERPROG_PROCESS_H
 #define USERPROG_PROCESS_H
 
+#include "threads/synch.h"
 #include "threads/thread.h"
 #include <stdint.h>
 
@@ -27,6 +28,10 @@ struct process {
   uint32_t* pagedir;          /* Page directory. */
   char process_name[16];      /* Name of the main thread */
   struct thread* main_thread; /* Pointer to main thread */
+
+  /* Synchronization for process loading */
+  struct semaphore load_sema;
+  bool load_success;
 };
 
 void userprog_init(void);
