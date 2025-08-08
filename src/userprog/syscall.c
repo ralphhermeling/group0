@@ -86,19 +86,22 @@ static void syscall_handler(struct intr_frame* f) {
    * include it in your final submission.
    */
   /* printf("System call number: %d\n", args[0]); */
-
-  if (args[0] == SYS_EXIT) {
-    validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
-    syscall_exit((int)args[1]);
-    return;
-  } else if (args[0] == SYS_WRITE) {
-    validate_buffer_in_user_region(&args[1], 3 * sizeof(uint32_t));
-    validate_buffer_in_user_region((void*)args[2], (unsigned)args[3]);
-    f->eax = syscall_write((int)args[1], (void*)args[2], (unsigned)args[3]);
-    return;
-  } else if (args[0] == SYS_PRACTICE) {
-    validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
-    f->eax = (int)args[1] + 1;
-    return;
+  switch (args[0]) {
+    case SYS_EXIT:
+      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
+      syscall_exit((int)args[1]);
+      break;
+    case SYS_WRITE:
+      validate_buffer_in_user_region(&args[1], 3 * sizeof(uint32_t));
+      validate_buffer_in_user_region((void*)args[2], (unsigned)args[3]);
+      f->eax = syscall_write((int)args[1], (void*)args[2], (unsigned)args[3]);
+      break;
+    case SYS_PRACTICE:
+      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
+      f->eax = (int)args[1] + 1;
+      break;
+    default:
+      printf("Unimplemented system call: %d\n", (int)args[0]);
+      break;
   }
 }
