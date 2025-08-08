@@ -77,7 +77,8 @@ UNUSED static void validate_string_in_user_region(const char* string) {
 
 static void syscall_handler(struct intr_frame* f) {
   uint32_t* args = f->esp;
-  validate_buffer_in_user_region(args, sizeof(uint32_t));
+  struct thread* t = thread_current();
+  t->in_syscall = true;
 
   /*
    * The following print statement, if uncommented, will print out the syscall
@@ -86,6 +87,7 @@ static void syscall_handler(struct intr_frame* f) {
    * include it in your final submission.
    */
   /* printf("System call number: %d\n", args[0]); */
+  validate_buffer_in_user_region(args, sizeof(uint32_t));
   switch (args[0]) {
     case SYS_EXIT:
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
@@ -104,4 +106,6 @@ static void syscall_handler(struct intr_frame* f) {
       printf("Unimplemented system call: %d\n", (int)args[0]);
       break;
   }
+
+  t->in_syscall = false;
 }
