@@ -19,6 +19,7 @@ struct child_info {
   bool has_been_waited;         /* True if parent has already waited for this child */
   struct semaphore exit_sema;   /* Signaled when child exits */
   struct list_elem elem;        /* List element for parent's children list */
+  struct process* child_process; /* Direct pointer to child's process structure */
 };
 ```
 
@@ -33,17 +34,39 @@ void destroy_child_info(struct child_info *info); /* Free child_info structure *
 int sys_wait(pid_t pid);  /* System call handler for wait */
 ```
 
+```c
+/* Updated process_load_info structure in userprog/process.c */
+struct process_load_info {
+  char* file_name;               /* Command line to execute */
+  struct semaphore* load_sema;   /* Synchronization for load completion */
+  bool* load_success;            /* Whether load succeeded */
+  struct process* parent_process; /* Parent's process structure */
+  struct process* child_process;  /* Child's process structure (set by child) */
+};
+```
+
 ## Algorithms
 
 ### Process Creation (`process_execute`)
-1. After successfully creating child thread but before returning:
+1. Create child thread with `thread_create()`
+2. Set up `process_load_info`:
+   - `info.parent_process = thread_current()->pcb`
+   - `info.child_process = NULL` (will be set by child)
+3. Wait for child to load: `sema_down(&load_sema)`
+4. After child loads successfully:
    - Allocate `struct child_info` with `create_child_info(child_tid)`
    - Initialize: `exit_status = -1`, `has_exited = false`, `has_been_waited = false`
+   - Set `child_info->child_process = info.child_process` (from child)
    - Initialize semaphore: `sema_init(&exit_sema, 0)`
    - Acquire parent's `children_lock`
    - Add to parent's `children` list
    - Release `children_lock`
-2. In child's `start_process()`, set `thread_current()->pcb->parent = parent_thread`
+
+### Child Process Initialization (`start_process`)
+1. Set `info->child_process = thread_current()->pcb`
+2. Set `thread_current()->pcb->parent = info->parent_process`  
+3. Continue with normal process loading (load executable, etc.)
+4. Signal parent: `sema_up(info->load_sema)`
 
 ### Wait Implementation (`sys_wait`)
 1. Get current thread as parent
@@ -81,8 +104,8 @@ In parent's `process_exit()`:
 1. Acquire `children_lock`
 2. For each `child_info` in children list:
    - If `child_info->has_exited == false`: 
-     * Child is still alive, so `child_info->pid` corresponds to a valid thread
-     * Find the child thread by TID and set `child_thread->pcb->parent = NULL`
+     * Child is still alive, so `child_process` pointer is valid
+     * Set `child_info->child_process->parent = NULL` (direct access!)
    - If `child_info->has_exited == true`:
      * Child already exited, no need to update parent pointer
    - Remove `child_info` from list and `destroy_child_info()`
