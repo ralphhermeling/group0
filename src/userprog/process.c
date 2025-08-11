@@ -292,9 +292,44 @@ static void start_process(void* load_info) {
 
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
-int process_wait(pid_t child_pid UNUSED) {
+int process_wait(pid_t child_pid) {
+  /* Find child process with given child_pid */
+  struct process* cur_pcb = thread_current()->pcb;
+  struct child_info* matching_child = NULL;
+  lock_acquire(&cur_pcb->children_lock);
+  struct list_elem* e;
+  for (e = list_begin(&cur_pcb->children); e != list_end(&cur_pcb->children); e = list_next(e)) {
+    struct child_info* child = list_entry(e, struct child_info, elem);
+    if (child_pid == child->pid) {
+      matching_child = child;
+      break;
+    }
+  }
+
+  /* child_pid is invalid, no such child process exists */
+  if (matching_child == NULL) {
+    lock_release(&cur_pcb->children_lock);
+    return -1;
+  }
+
+  /* process_wait() has already been successfully called for the given PID */
+  if (matching_child->has_been_waited) {
+    lock_release(&cur_pcb->children_lock);
+    return -1;
+  }
+
+  matching_child->has_been_waited = true;
+  if (!matching_child->has_exited) {
+    lock_release(&cur_pcb->children_lock);
+    sema_down(&matching_child->exit_sema);
+    lock_acquire(&cur_pcb->children_lock);
+  }
+
+  int status = matching_child->exit_status;
+  lock_release(&cur_pcb->children_lock);
+
   sema_down(&temporary);
-  return 0;
+  return status;
 }
 
 /* Free the current process's resources. */

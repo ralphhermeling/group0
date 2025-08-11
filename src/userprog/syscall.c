@@ -89,6 +89,10 @@ static void syscall_handler(struct intr_frame* f) {
       validate_string_in_user_region((char*)args[1]);
       f->eax = syscall_exec((char*)args[1]);
       break;
+    case SYS_WAIT:
+      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
+      f->eax = process_wait((int)args[1]);
+      break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);
       break;
