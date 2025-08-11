@@ -30,12 +30,32 @@ static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
 bool setup_thread(void (**eip)(void), void** esp);
 struct process_load_info {
-  char* file_name;                /* Command line to execute */
-  struct semaphore* load_sema;    /* Synchronization for load completion */
-  bool* load_success;             /* Whether load succeeded */
-  struct process* parent_process; /* Parent's process structure */
-  struct process* child_process;  /* Child's process structure (set by child) */
+  char* file_name;             /* Command line to execute */
+  struct semaphore* load_sema; /* Synchronization for load completion */
+  bool* load_success;          /* Whether load succeeded */
+  struct process* parent_pcb;  /* Parent's process structure */
+  struct process* child_pcb;   /* Child's process structure (set by child) */
 };
+
+/* Allocate and initialize child_info */
+struct child_info* create_child_info(pid_t pid) {
+  struct child_info* new_child_info = malloc(sizeof(struct child_info));
+  if (!new_child_info) {
+    return NULL;
+  }
+
+  new_child_info->pid = pid;
+  new_child_info->exit_status = -1;
+  new_child_info->has_exited = false;
+  new_child_info->has_been_waited = false;
+  sema_init(&new_child_info->exit_sema, 0);
+  new_child_info->child_process = NULL;
+
+  return new_child_info;
+}
+
+/* Free child_info structure */
+void destroy_child_info(struct child_info* info) { free(info); }
 
 /* Initializes user programs in the system by ensuring the main
    thread has a minimal PCB so that it can execute and wait for
@@ -81,6 +101,8 @@ pid_t process_execute(const char* file_name) {
   info.file_name = fn_copy;
   info.load_sema = &load_sema;
   info.load_success = &load_success;
+  info.parent_pcb = thread_current()->pcb;
+  info.child_pcb = NULL;
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create(file_name, PRI_DEFAULT, start_process, &info);
@@ -91,8 +113,15 @@ pid_t process_execute(const char* file_name) {
 
   /* Wait for child process program to load */
   sema_down(&load_sema);
+
   /* Check result */
-  return load_success ? tid : -1;
+  if (!(*info.load_success)) {
+    return -1;
+  }
+
+  /* Add succesfully loaded child to parent's pcb */
+
+  return tid;
 }
 
 static void load_args(char* file_name, void** esp) {
@@ -154,86 +183,6 @@ static void load_args(char* file_name, void** esp) {
   *(--argv_) = 0;                  /* return addr = 0 */
 
   *esp = argv_;
-}
-
-static void pass_arguments(struct intr_frame* if_, char* file_name) {
-  /* Make a copy of FILE_NAME to safely tokenize it. */
-  char* fn_copy = palloc_get_page(0);
-  ASSERT(fn_copy != NULL);
-  strlcpy(fn_copy, file_name, PGSIZE);
-
-  char* args[MAX_ARGS];
-  int argc = 0;
-
-  /* Tokenize file name by splitting on whitespace */
-  char *token, *save_ptr;
-  token = strtok_r(file_name, " ", &save_ptr);
-  while (token != NULL && argc < MAX_ARGS) {
-    args[argc++] = token;
-    token = strtok_r(NULL, " ", &save_ptr);
-  }
-
-  void* user_esp = (void*)if_->esp;
-  char* arg_ptrs[MAX_ARGS];
-
-  /* Push arguments onto stack in reverse */
-  for (int i = argc - 1; i >= 0; i--) {
-    size_t len = strlen(args[i]) + 1;
-    user_esp -= len;
-    memcpy(user_esp, args[i], len);
-    arg_ptrs[i] = user_esp;
-  }
-
-  /* Word-align to 4-byte boundary */
-  user_esp = (void*)((uintptr_t)user_esp & 0xfffffffc);
-  printf("After word alignment: user_esp = %p\n", user_esp);
-
-  /* Calculate space needed for remaining items */
-  size_t remaining_size = sizeof(char*) +        /* NULL sentinel */
-                          argc * sizeof(char*) + /* arg pointers */
-                          sizeof(char**) +       /* argv */
-                          sizeof(int) +          /* argc */
-                          sizeof(void*);         /* return address */
-
-  /* Adjust to ensure final stack pointer allows 16-byte aligned allocations */
-  uintptr_t target_esp = (uintptr_t)user_esp - remaining_size;
-  if ((target_esp & 0xf) != 0) {
-    size_t padding = 16 - (target_esp & 0xf);
-    user_esp -= padding;
-    printf("Added %zu bytes padding for alignment\n", padding);
-  }
-  printf("Stack pointer after alignment adjustment: %p\n", user_esp);
-
-  /* Push null sentinel (argv[argc] = NULL) */
-  user_esp -= sizeof(char*);
-  *(char**)user_esp = NULL;
-
-  /* Push pointers to each argument string */
-  for (int i = argc - 1; i >= 0; i--) {
-    user_esp -= sizeof(char*);
-    *(char**)user_esp = arg_ptrs[i];
-  }
-
-  /* Push argv (char **) */
-  char** argv = (char**)user_esp;
-  user_esp -= sizeof(char**);
-  *(char***)user_esp = argv;
-
-  /* Push argc (int) */
-  user_esp -= sizeof(int);
-  *(int*)user_esp = argc;
-
-  /* Push fake return address */
-  user_esp -= sizeof(void*);
-  *(void**)user_esp = 0;
-
-  printf("Final user_esp: %p\n", user_esp);
-  printf("Final alignment check: last nibble = 0x%x\n", (uintptr_t)user_esp & 0xf);
-
-  /* Set final stack pointer */
-  if_->esp = user_esp;
-
-  palloc_free_page(fn_copy);
 }
 
 /* A thread function that loads a user process and starts it

@@ -8,7 +8,7 @@ struct process {
   /* ... existing fields ... */
   struct list children;           /* List of child_info for direct children */
   struct lock children_lock;      /* Protects children list */
-  struct process* parent;          /* Parent thread, NULL if no parent */
+  struct process* parent_pcb;          /* Parent thread, NULL if no parent */
 };
 
 /* New structure for tracking child processes */
@@ -19,7 +19,7 @@ struct child_info {
   bool has_been_waited;         /* True if parent has already waited for this child */
   struct semaphore exit_sema;   /* Signaled when child exits */
   struct list_elem elem;        /* List element for parent's children list */
-  struct process* child_process; /* Direct pointer to child's process structure */
+  struct process* child_pcb; /* Direct pointer to child's process structure */
 };
 ```
 
