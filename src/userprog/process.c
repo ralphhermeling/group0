@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "list.h"
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
@@ -49,7 +50,7 @@ struct child_info* create_child_info(pid_t pid) {
   new_child_info->has_exited = false;
   new_child_info->has_been_waited = false;
   sema_init(&new_child_info->exit_sema, 0);
-  new_child_info->child_process = NULL;
+  new_child_info->pcb = NULL;
 
   return new_child_info;
 }
@@ -75,6 +76,11 @@ void userprog_init(void) {
 
   /* Kill the kernel if we did not succeed */
   ASSERT(success);
+
+  /* Initialize wait infrastructure for kernel thread */
+  lock_init(&t->pcb->children_lock);
+  list_init(&t->pcb->children);
+  t->pcb->parent_pcb = NULL;
 }
 
 /* Starts a new thread running a user program loaded from
@@ -115,11 +121,17 @@ pid_t process_execute(const char* file_name) {
   sema_down(&load_sema);
 
   /* Check result */
-  if (!(*info.load_success)) {
+  if (!load_success) {
     return -1;
   }
 
   /* Add succesfully loaded child to parent's pcb */
+  ASSERT(info.child_pcb != NULL);
+  struct child_info* new_child_info = create_child_info(tid);
+  new_child_info->pcb = info.child_pcb;
+  lock_acquire(&info.parent_pcb->children_lock);
+  list_push_back(&info.parent_pcb->children, &new_child_info->elem);
+  lock_release(&info.parent_pcb->children_lock);
 
   return tid;
 }
@@ -213,6 +225,12 @@ static void start_process(void* load_info) {
     // does not try to activate our uninitialized pagedir
     new_pcb->pagedir = NULL;
     t->pcb = new_pcb;
+
+    /* Initialize wait infrastructure for this NEW process */
+    list_init(&new_pcb->children);
+    lock_init(&new_pcb->children_lock);
+    new_pcb->parent_pcb = info->parent_pcb;
+    info->child_pcb = new_pcb;
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;

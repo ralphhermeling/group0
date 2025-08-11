@@ -40,8 +40,8 @@ struct process_load_info {
   char* file_name;               /* Command line to execute */
   struct semaphore* load_sema;   /* Synchronization for load completion */
   bool* load_success;            /* Whether load succeeded */
-  struct process* parent_process; /* Parent's process structure */
-  struct process* child_process;  /* Child's process structure (set by child) */
+  struct process* parent_pcb; /* Parent's process structure */
+  struct process* child_pcb;  /* Child's process structure (set by child) */
 };
 ```
 
