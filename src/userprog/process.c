@@ -81,6 +81,7 @@ void userprog_init(void) {
   lock_init(&t->pcb->children_lock);
   list_init(&t->pcb->children);
   t->pcb->parent_pcb = NULL;
+  t->pcb->exit_status = -1;
 }
 
 /* Starts a new thread running a user program loaded from
@@ -231,6 +232,7 @@ static void start_process(void* load_info) {
     lock_init(&new_pcb->children_lock);
     new_pcb->parent_pcb = info->parent_pcb;
     info->child_pcb = new_pcb;
+    new_pcb->exit_status = -1;
 
     // Continue initializing the PCB as normal
     t->pcb->main_thread = t;
@@ -321,6 +323,44 @@ void process_exit(void) {
     pagedir_activate(NULL);
     pagedir_destroy(pd);
   }
+
+  /* Signal to parent process that child process has exited */
+  int status = cur->pcb->exit_status;
+  if (cur->pcb->parent_pcb != NULL) {
+    lock_acquire(&cur->pcb->parent_pcb->children_lock);
+
+    struct list_elem* e;
+    for (e = list_begin(&cur->pcb->parent_pcb->children);
+         e != list_end(&cur->pcb->parent_pcb->children); e = list_next(e)) {
+      struct child_info* child = list_entry(e, struct child_info, elem);
+      if (child->pid == get_pid(cur->pcb)) {
+        child->exit_status = status;
+        child->has_exited = true;
+        sema_up(&child->exit_sema);
+        break;
+      }
+    }
+
+    lock_release(&cur->pcb->parent_pcb->children_lock);
+  }
+
+  /* Clean up children list of this process */
+  lock_acquire(&cur->pcb->children_lock);
+
+  while (!list_empty(&cur->pcb->children)) {
+    struct list_elem* e = list_pop_back(&cur->pcb->children);
+    struct child_info* child = list_entry(e, struct child_info, elem);
+
+    /* Orphaning living children */
+    if (!child->has_exited) {
+      child->pcb->parent_pcb = NULL;
+    }
+
+    /* Destroy the child_info structure */
+    destroy_child_info(child);
+  }
+
+  lock_release(&cur->pcb->children_lock);
 
   /* Free the PCB of this process and kill this thread
      Avoid race where PCB is freed before t->pcb is set to NULL

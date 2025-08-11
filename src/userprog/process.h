@@ -31,6 +31,7 @@ struct process {
   struct list children;       /* List of child_info for direct children */
   struct lock children_lock;  /* Protects children list */
   struct process* parent_pcb; /* Parent thread, NULL if no parent */
+  int exit_status;            /* Process' exit status */
 };
 
 /* New structure for tracking child processes */
