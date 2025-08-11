@@ -8,7 +8,6 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "userprog/process.h"
-#include "userprog/pagedir.h"
 #include "threads/vaddr.h"
 #include <stdbool.h>
 
@@ -23,6 +22,8 @@ void syscall_exit(int status) {
   process_exit();
 }
 
+static pid_t syscall_exec(char* cmd_line) { return process_execute(cmd_line); }
+
 static unsigned syscall_write(int fd, void* buffer, unsigned size) {
   /* Only support STDOUT for now */
   ASSERT(fd == 1);
@@ -30,30 +31,6 @@ static unsigned syscall_write(int fd, void* buffer, unsigned size) {
   /* Write number of size character of buffer to STDOUT */
   putbuf(buffer, size);
   return size;
-}
-
-static bool validate_user_buffer(const void* buffer, size_t size) {
-  uint8_t* start = (uint8_t*)buffer;
-  uint8_t* end = start + size;
-
-  for (uint8_t* ptr = start; ptr < end; ptr = pg_round_down(ptr) + PGSIZE) {
-    if (!is_user_vaddr(ptr) || pagedir_get_page(thread_current()->pcb->pagedir, ptr) == NULL) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-static bool get_user_args(void* esp, uint32_t* dest, size_t argc) {
-  if (!validate_user_buffer(esp, argc * sizeof(uint32_t)))
-    return false;
-
-  uint32_t* uargs = (uint32_t*)esp;
-  for (size_t i = 0; i < argc; i++) {
-    dest[i] = uargs[i];
-  }
-  return true;
 }
 
 /*
@@ -70,7 +47,7 @@ static void validate_buffer_in_user_region(const void* buffer, size_t length) {
  * This does not check that the string consists of only mapped pages; it merely
  * checks the string exists entirely below PHYS_BASE.
  */
-UNUSED static void validate_string_in_user_region(const char* string) {
+static void validate_string_in_user_region(const char* string) {
   uintptr_t delta = PHYS_BASE - (const void*)string;
   if (!is_user_vaddr(string) || strnlen(string, delta) == delta)
     syscall_exit(-1);
@@ -105,6 +82,11 @@ static void syscall_handler(struct intr_frame* f) {
       break;
     case SYS_HALT:
       shutdown_power_off();
+      break;
+    case SYS_EXEC:
+      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
+      validate_string_in_user_region((char*)args[1]);
+      f->eax = syscall_exec((char*)args[1]);
       break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);
