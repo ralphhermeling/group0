@@ -30,9 +30,11 @@ static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
 bool setup_thread(void (**eip)(void), void** esp);
 struct process_load_info {
-  char* file_name; /* Command line to execute */
-  struct semaphore* load_sema;
-  bool* load_success;
+  char* file_name;                /* Command line to execute */
+  struct semaphore* load_sema;    /* Synchronization for load completion */
+  bool* load_success;             /* Whether load succeeded */
+  struct process* parent_process; /* Parent's process structure */
+  struct process* child_process;  /* Child's process structure (set by child) */
 };
 
 /* Initializes user programs in the system by ensuring the main
