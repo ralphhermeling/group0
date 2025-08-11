@@ -57,10 +57,8 @@ int sys_wait(pid_t pid);  /* System call handler for wait */
    - Call `sema_down(&child->exit_sema)` (blocks until child exits)
    - Reacquire `children_lock`
 6. Read `exit_status` from `child_info->exit_status`
-7. Remove child_info from parent's children list
-8. Release `children_lock`
-9. Call `destroy_child_info(child_info)`
-10. Return the exit_status
+7. Release `children_lock`
+8. Return the exit_status
 
 ### Process Exit (`process_exit`) 
 1. If `thread_current()->pcb->parent` is not NULL:
