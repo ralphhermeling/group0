@@ -277,7 +277,9 @@ static void start_process(void* load_info) {
     success = load(file_name, &if_.eip, &if_.esp);
   }
 
-  load_args(argv, &if_.esp);
+  if (success) {
+    load_args(argv, &if_.esp);
+  }
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
   if (!success && pcb_success) {
