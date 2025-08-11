@@ -69,14 +69,24 @@ int sys_wait(pid_t pid);  /* System call handler for wait */
      - Set `child_info->has_exited = true`
      - Call `sema_up(&child_info->exit_sema)`
    - Release `parent->pcb->children_lock`
-2. Clean up own children list:
+2. If `thread_current()->pcb->parent` is NULL:
+   - Parent already exited, no need to signal anyone
+3. Clean up own children list:
    - Acquire `children_lock`
    - For each child in children list: remove from list and `destroy_child_info()`
    - Release `children_lock`
 
 ### Parent Exit Before Child
-- In parent's `process_exit()`: iterate through children list, remove all entries and free them
-- Child will check if `parent != NULL` before trying to signal; if parent is gone, child simply exits without signaling
+In parent's `process_exit()`:
+1. Acquire `children_lock`
+2. For each `child_info` in children list:
+   - If `child_info->has_exited == false`: 
+     * Child is still alive, so `child_info->pid` corresponds to a valid thread
+     * Find the child thread by TID and set `child_thread->pcb->parent = NULL`
+   - If `child_info->has_exited == true`:
+     * Child already exited, no need to update parent pointer
+   - Remove `child_info` from list and `destroy_child_info()`
+3. Release `children_lock`
 
 ## Synchronization
 
