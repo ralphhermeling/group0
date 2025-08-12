@@ -14,6 +14,7 @@
 /* Predefined file handles. */
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
+#define FIRST_FILE_FD 2 // First available fd for actual files
 
 /* Standard functions. */
 int printf(const char*, ...) PRINTF_FORMAT(1, 2);
