@@ -111,6 +111,7 @@ pid_t process_execute(const char* file_name) {
   info.parent_pcb = thread_current()->pcb;
   info.child_pcb = NULL;
 
+  lock_acquire(&info.parent_pcb->children_lock);
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create(file_name, PRI_DEFAULT, start_process, &info);
   if (tid == TID_ERROR) {
@@ -123,6 +124,7 @@ pid_t process_execute(const char* file_name) {
 
   /* Check result */
   if (!load_success) {
+    lock_release(&info.parent_pcb->children_lock);
     return -1;
   }
 
@@ -130,7 +132,6 @@ pid_t process_execute(const char* file_name) {
   ASSERT(info.child_pcb != NULL);
   struct child_info* new_child_info = create_child_info(tid);
   new_child_info->pcb = info.child_pcb;
-  lock_acquire(&info.parent_pcb->children_lock);
   list_push_back(&info.parent_pcb->children, &new_child_info->elem);
   lock_release(&info.parent_pcb->children_lock);
 
@@ -289,11 +290,9 @@ static void start_process(void* load_info) {
    child of the calling process, or if process_wait() has already
    been successfully called for the given PID, returns -1
    immediately, without waiting.
-
-   This function will be implemented in problem 2-2.  For now, it
-   does nothing. */
-int process_wait(pid_t child_pid) {
-  /* Find child process with given child_pid */
+*/
+int process_wait(UNUSED pid_t child_pid) {
+  // /* Find child process with given child_pid */
   struct process* cur_pcb = thread_current()->pcb;
   struct child_info* matching_child = NULL;
   lock_acquire(&cur_pcb->children_lock);
@@ -305,9 +304,12 @@ int process_wait(pid_t child_pid) {
       break;
     }
   }
+  // printf("Found matching_child:%s\n", matching_child != NULL ? "yes" : "no");
+  // printf("Does process have parent:%s\n", cur_pcb->parent_pcb != NULL ? "yes" : "no");
 
   /* child_pid is invalid, no such child process exists */
   if (matching_child == NULL) {
+    // printf("child_pid is invalid, no such child process exists \n");
     lock_release(&cur_pcb->children_lock);
     return -1;
   }
@@ -319,6 +321,7 @@ int process_wait(pid_t child_pid) {
   }
 
   matching_child->has_been_waited = true;
+  // printf("child has exited:%d\n", matching_child->has_exited);
   if (!matching_child->has_exited) {
     lock_release(&cur_pcb->children_lock);
     sema_down(&matching_child->exit_sema);
@@ -359,18 +362,26 @@ void process_exit(void) {
     pagedir_destroy(pd);
   }
 
+  // printf("exiting process:%d\n", get_pid(cur->pcb));
+
   /* Signal to parent process that child process has exited */
   int status = cur->pcb->exit_status;
   if (cur->pcb->parent_pcb != NULL) {
+    // printf("parent exists\n");
     lock_acquire(&cur->pcb->parent_pcb->children_lock);
 
+    // printf("does parent have any children: %s\n",
+    // list_empty(&cur->pcb->parent_pcb->children) ? "no" : "yes");
     struct list_elem* e;
     for (e = list_begin(&cur->pcb->parent_pcb->children);
          e != list_end(&cur->pcb->parent_pcb->children); e = list_next(e)) {
       struct child_info* child = list_entry(e, struct child_info, elem);
+      // printf("just a child from parent:%d", child->pid);
       if (child->pid == get_pid(cur->pcb)) {
+        // printf("found child in parent pcb\n");
         child->exit_status = status;
         child->has_exited = true;
+        child->pcb = NULL;
         sema_up(&child->exit_sema);
         break;
       }
