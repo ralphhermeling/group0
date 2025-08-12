@@ -25,7 +25,6 @@
 #define MAX_ARGS 32
 #define MAX_PROGRAM_NAME_LENGTH 64
 
-static struct semaphore temporary;
 static thread_func start_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
@@ -92,7 +91,6 @@ pid_t process_execute(const char* file_name) {
   char* fn_copy;
   tid_t tid;
 
-  sema_init(&temporary, 0);
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page(0);
@@ -270,7 +268,6 @@ static void start_process(void* load_info) {
   palloc_free_page(argv);
   free(file_name);
   if (!success) {
-    sema_up(&temporary);
     thread_exit();
   }
 
@@ -331,7 +328,6 @@ int process_wait(UNUSED pid_t child_pid) {
   int status = matching_child->exit_status;
   lock_release(&cur_pcb->children_lock);
 
-  sema_down(&temporary);
   return status;
 }
 
@@ -416,7 +412,6 @@ void process_exit(void) {
   cur->pcb = NULL;
   free(pcb_to_free);
 
-  sema_up(&temporary);
   thread_exit();
 }
 
