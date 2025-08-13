@@ -3,7 +3,10 @@
 #include <stdio.h>
 #include <syscall-nr.h>
 #include "devices/shutdown.h"
+#include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "list.h"
+#include <stdlib.h>
 #include "process.h"
 #include "string.h"
 #include "threads/interrupt.h"
@@ -27,9 +30,19 @@ int init_file_descriptor(
     struct process* pcb,
     struct file* file); // Create new file descriptor, add to process's file table, return fd number
 void destroy_file_descriptor(
-    struct file_descriptor* fd_entry);     // Remove file descriptor from table and free memory
-void close_all_files(struct process* pcb); // Close all open files when process exits
-static struct lock filesys_lock;           // Global lock protecting all file system operations
+    struct file_descriptor* fd_entry); // Remove file descriptor from table and free memory
+static struct lock filesys_lock;       // Global lock protecting all file system operations
+
+void destroy_file_descriptor_table(struct process* pcb) {
+  lock_acquire(&filesys_lock);
+  while (!list_empty(&pcb->open_files)) {
+    struct list_elem* e = list_pop_back(&pcb->open_files);
+    struct file_descriptor* file_descriptor = list_entry(e, struct file_descriptor, elem);
+    file_close(file_descriptor->file);
+    free(file_descriptor);
+  }
+  lock_release(&filesys_lock);
+}
 
 void syscall_init(void) {
   lock_init(&filesys_lock);

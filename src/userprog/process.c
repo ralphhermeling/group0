@@ -9,6 +9,7 @@
 #include "list.h"
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
+#include "userprog/syscall.h"
 #include "userprog/tss.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
@@ -232,8 +233,10 @@ static void start_process(void* load_info) {
     new_pcb->parent_pcb = info->parent_pcb;
     info->child_pcb = new_pcb;
     new_pcb->exit_status = -1;
+    list_init(&new_pcb->open_files);
 
     // Continue initializing the PCB as normal
+    new_pcb->next_fd = FIRST_FILE_FD;
     t->pcb->main_thread = t;
     strlcpy(t->pcb->process_name, file_name, MAX_PROGRAM_NAME_LENGTH);
   }
@@ -248,7 +251,15 @@ static void start_process(void* load_info) {
   }
 
   if (success) {
+    /* Arrange arguments on interrupt frame */
     load_args(argv, &if_.esp);
+  }
+
+  /* Protect executable file by denying file write */
+  if (success && pcb_success) {
+    struct file* executable_file = filesys_open(file_name);
+    t->pcb->executable_file = executable_file;
+    file_deny_write(executable_file);
   }
 
   /* Handle failure with succesful PCB malloc. Must free the PCB */
@@ -403,6 +414,13 @@ void process_exit(void) {
   }
 
   lock_release(&cur->pcb->children_lock);
+
+  /* Close executable file and allow writes again */
+  file_allow_write(cur->pcb->executable_file);
+  file_close(cur->pcb->executable_file);
+
+  /* Destroy file descriptor table */
+  destroy_file_descriptor_table(cur->pcb);
 
   /* Free the PCB of this process and kill this thread
      Avoid race where PCB is freed before t->pcb is set to NULL
