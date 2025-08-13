@@ -10,7 +10,9 @@
 #include "process.h"
 #include "string.h"
 #include "threads/interrupt.h"
+#include "threads/synch.h"
 #include "threads/thread.h"
+#include "threads/malloc.h"
 #include "userprog/process.h"
 #include "threads/vaddr.h"
 #include <stdbool.h>
@@ -73,10 +75,40 @@ static bool syscall_create(char* file, unsigned initial_size) {
 }
 
 static bool syscall_remove(char* file) {
+  if (file == NULL) {
+    return false;
+  }
   lock_acquire(&filesys_lock);
   bool success = filesys_remove(file);
   lock_release(&filesys_lock);
   return success;
+}
+
+static int syscall_open(char* file) {
+  if (file == NULL) {
+    return -1;
+  }
+
+  lock_acquire(&filesys_lock);
+  struct file* f = filesys_open(file);
+  if (f == NULL) {
+    lock_release(&filesys_lock);
+    return -1;
+  }
+
+  struct file_descriptor* file_descriptor = malloc(sizeof(struct file_descriptor));
+  if (file_descriptor == NULL) {
+    lock_release(&filesys_lock);
+    return -1;
+  }
+
+  struct thread* t = thread_current();
+  file_descriptor->fd = t->pcb->next_fd++;
+  file_descriptor->file = f;
+
+  list_push_back(&t->pcb->open_files, &file_descriptor->elem);
+  lock_release(&filesys_lock);
+  return file_descriptor->fd;
 }
 
 /*
@@ -147,6 +179,11 @@ static void syscall_handler(struct intr_frame* f) {
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
       validate_string_in_user_region((char*)args[1]);
       f->eax = syscall_remove((char*)args[1]);
+      break;
+    case SYS_OPEN:
+      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
+      validate_string_in_user_region((char*)args[1]);
+      f->eax = syscall_open((char*)args[1]);
       break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);
