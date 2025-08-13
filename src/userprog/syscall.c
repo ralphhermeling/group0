@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <syscall-nr.h>
 #include "devices/shutdown.h"
+#include "filesys/filesys.h"
 #include "process.h"
 #include "string.h"
 #include "threads/interrupt.h"
@@ -30,7 +31,10 @@ void destroy_file_descriptor(
 void close_all_files(struct process* pcb); // Close all open files when process exits
 static struct lock filesys_lock;           // Global lock protecting all file system operations
 
-void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
+void syscall_init(void) {
+  lock_init(&filesys_lock);
+  intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
+}
 void syscall_exit(int status) {
   printf("%s: exit(%d)\n", thread_current()->pcb->process_name, status);
   thread_current()->pcb->exit_status = status;
@@ -46,6 +50,13 @@ static unsigned syscall_write(int fd, void* buffer, unsigned size) {
   /* Write number of size character of buffer to STDOUT */
   putbuf(buffer, size);
   return size;
+}
+
+static bool syscall_create(char* file, unsigned initial_size) {
+  lock_acquire(&filesys_lock);
+  bool success = filesys_create(file, initial_size);
+  lock_release(&filesys_lock);
+  return success;
 }
 
 /*
@@ -106,6 +117,11 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_WAIT:
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
       f->eax = process_wait((int)args[1]);
+      break;
+    case SYS_CREATE:
+      validate_buffer_in_user_region(&args[1], 2 * sizeof(uint32_t));
+      validate_string_in_user_region((char*)args[1]);
+      f->eax = syscall_create((char*)args[1], (unsigned)args[2]);
       break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);
