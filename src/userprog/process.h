@@ -25,13 +25,16 @@ typedef void (*stub_fun)(pthread_fun, void*);
    of the process, which is `special`. */
 struct process {
   /* Owned by process.c. */
-  uint32_t* pagedir;          /* Page directory. */
-  char process_name[16];      /* Name of the main thread */
-  struct thread* main_thread; /* Pointer to main thread */
-  struct list children;       /* List of child_info for direct children */
-  struct lock children_lock;  /* Protects children list */
-  struct process* parent_pcb; /* Parent thread, NULL if no parent */
-  int exit_status;            /* Process' exit status */
+  uint32_t* pagedir;            /* Page directory. */
+  char process_name[16];        /* Name of the main thread */
+  struct thread* main_thread;   /* Pointer to main thread */
+  struct list children;         /* List of child_info for direct children */
+  struct lock children_lock;    /* Protects children list */
+  struct process* parent_pcb;   /* Parent thread, NULL if no parent */
+  int exit_status;              /* Process' exit status */
+  struct list open_files;       /* List of open file descriptors for this process */
+  int next_fd;                  /* Next available file descriptor number */
+  struct file* executable_file; /* Pointer to process's executable file (for write protection) */
 };
 
 /* New structure for tracking child processes */

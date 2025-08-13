@@ -15,6 +15,20 @@
 #define NUM_BYTES_ARGUMENT_STACK 4
 
 static void syscall_handler(struct intr_frame*);
+struct file_descriptor {
+  int fd;                /* File descriptor number (unique within process) */
+  struct file* file;     /* Pointer to open file from Pintos file system */
+  struct list_elem elem; /* List element for process's open_files list */
+};
+struct file_descriptor*
+find_file_descriptor(int fd); // Find file_descriptor in current process's open_files list
+int init_file_descriptor(
+    struct process* pcb,
+    struct file* file); // Create new file descriptor, add to process's file table, return fd number
+void destroy_file_descriptor(
+    struct file_descriptor* fd_entry);     // Remove file descriptor from table and free memory
+void close_all_files(struct process* pcb); // Close all open files when process exits
+static struct lock filesys_lock;           // Global lock protecting all file system operations
 
 void syscall_init(void) { intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall"); }
 void syscall_exit(int status) {
