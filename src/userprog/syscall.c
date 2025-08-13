@@ -59,6 +59,13 @@ static bool syscall_create(char* file, unsigned initial_size) {
   return success;
 }
 
+static bool syscall_remove(char* file) {
+  lock_acquire(&filesys_lock);
+  bool success = filesys_remove(file);
+  lock_release(&filesys_lock);
+  return success;
+}
+
 /*
  * This does not check that the buffer consists of only mapped pages; it merely
  * checks the buffer exists entirely below PHYS_BASE.
@@ -122,6 +129,11 @@ static void syscall_handler(struct intr_frame* f) {
       validate_buffer_in_user_region(&args[1], 2 * sizeof(uint32_t));
       validate_string_in_user_region((char*)args[1]);
       f->eax = syscall_create((char*)args[1], (unsigned)args[2]);
+      break;
+    case SYS_REMOVE:
+      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
+      validate_string_in_user_region((char*)args[1]);
+      f->eax = syscall_remove((char*)args[1]);
       break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);
