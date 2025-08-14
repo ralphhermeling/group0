@@ -95,9 +95,8 @@ struct thread {
 
 #ifdef USERPROG
   /* Owned by process.c. */
-  struct process* pcb;    /* Process control block if this thread is a userprog */
-  struct file* open_file; /* Single open file supported. */
-  bool in_syscall;        /* Stores if we are in a syscall. */
+  struct process* pcb; /* Process control block if this thread is a userprog */
+  bool in_syscall;     /* Stores if we are in a syscall. */
 #endif
 
   /* Owned by thread.c. */

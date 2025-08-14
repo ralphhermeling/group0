@@ -428,7 +428,6 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->stack = (uint8_t*)t + PGSIZE;
   t->priority = priority;
   t->pcb = NULL;
-  t->open_file = NULL;
   t->in_syscall = false;
   t->magic = THREAD_MAGIC;
 
