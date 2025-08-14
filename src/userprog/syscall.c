@@ -88,15 +88,11 @@ static int syscall_write(int fd, void* buffer, unsigned size) {
     putbuf(buffer, size);
     return size;
   }
-  lock_acquire(&filesys_lock);
   struct file_descriptor* file_descriptor = find_file_descriptor(fd);
   if (file_descriptor == NULL) {
-    lock_release(&filesys_lock);
     return -1;
   }
-  int bytes_written = file_write(file_descriptor->file, buffer, size);
-  lock_release(&filesys_lock);
-  return bytes_written;
+  return file_write(file_descriptor->file, buffer, size);
 }
 
 static bool syscall_create(char* file, unsigned initial_size) {
@@ -107,10 +103,7 @@ static bool syscall_remove(char* file) {
   if (file == NULL) {
     return false;
   }
-  lock_acquire(&filesys_lock);
-  bool success = filesys_remove(file);
-  lock_release(&filesys_lock);
-  return success;
+  return filesys_remove(file);
 }
 
 static int syscall_open(char* file) {
@@ -137,73 +130,56 @@ static int syscall_open(char* file) {
 }
 
 static int syscall_filesize(int fd) {
-  lock_acquire(&filesys_lock);
   struct file_descriptor* file_descriptor = find_file_descriptor(fd);
   if (file_descriptor == NULL) {
-    lock_release(&filesys_lock);
     return -1;
   }
 
-  int file_size = file_length(file_descriptor->file);
-  lock_release(&filesys_lock);
-  return file_size;
+  return file_length(file_descriptor->file);
 }
 
-static void syscall_close(int fd) {
-  lock_acquire(&filesys_lock);
+static bool syscall_close(int fd) {
   struct file_descriptor* file_descriptor = find_file_descriptor(fd);
   if (file_descriptor == NULL) {
-    lock_release(&filesys_lock);
-    syscall_exit(-1);
+    return false;
   }
+  file_close(file_descriptor->file);
   list_remove(&file_descriptor->elem);
   free(file_descriptor);
-  lock_release(&filesys_lock);
+  return true;
 }
 
 static int syscall_read(int fd, void* buffer, unsigned size) {
-  lock_acquire(&filesys_lock);
   if (fd == STDIN_FILENO) {
     uint8_t* byte_buffer = (uint8_t*)buffer;
     for (unsigned i = 0; i < size; i++) {
       byte_buffer[i] = input_getc();
     }
-    lock_release(&filesys_lock);
     return (int)size;
   }
 
   struct file_descriptor* file_descriptor = find_file_descriptor(fd);
   if (file_descriptor == NULL) {
-    lock_release(&filesys_lock);
     return -1;
   }
 
-  int bytes_read = file_read(file_descriptor->file, buffer, size);
-  lock_release(&filesys_lock);
-  return bytes_read;
+  return file_read(file_descriptor->file, buffer, size);
 }
 
 static int syscall_tell(int fd) {
-  lock_acquire(&filesys_lock);
   struct file_descriptor* file_descriptor = find_file_descriptor(fd);
   if (file_descriptor == NULL) {
-    lock_release(&filesys_lock);
     return -1;
   }
-  int result = file_tell(file_descriptor->file);
-  lock_release(&filesys_lock);
-  return result;
+  return file_tell(file_descriptor->file);
 }
 
 static void syscall_seek(int fd, unsigned position) {
-  lock_acquire(&filesys_lock);
   struct file_descriptor* file_descriptor = find_file_descriptor(fd);
   if (file_descriptor == NULL) {
-    lock_release(&filesys_lock);
     syscall_exit(-1);
   }
   file_seek(file_descriptor->file, position);
-  lock_release(&filesys_lock);
 }
 
 /*
@@ -245,9 +221,11 @@ static void syscall_handler(struct intr_frame* f) {
       syscall_exit((int)args[1]);
       break;
     case SYS_WRITE:
+      lock_acquire(&filesys_lock);
       validate_buffer_in_user_region(&args[1], 3 * sizeof(uint32_t));
       validate_buffer_in_user_region((void*)args[2], (unsigned)args[3]);
       f->eax = syscall_write((int)args[1], (void*)args[2], (unsigned)args[3]);
+      lock_release(&filesys_lock);
       break;
     case SYS_PRACTICE:
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
@@ -273,9 +251,11 @@ static void syscall_handler(struct intr_frame* f) {
       lock_release(&filesys_lock);
       break;
     case SYS_REMOVE:
+      lock_acquire(&filesys_lock);
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
       validate_string_in_user_region((char*)args[1]);
       f->eax = syscall_remove((char*)args[1]);
+      lock_release(&filesys_lock);
       break;
     case SYS_OPEN:
       lock_acquire(&filesys_lock);
@@ -285,25 +265,38 @@ static void syscall_handler(struct intr_frame* f) {
       lock_release(&filesys_lock);
       break;
     case SYS_FILESIZE:
+      lock_acquire(&filesys_lock);
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
       f->eax = syscall_filesize((int)args[1]);
+      lock_release(&filesys_lock);
       break;
     case SYS_CLOSE:
+      lock_acquire(&filesys_lock);
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
-      syscall_close((int)args[1]);
+      bool success = syscall_close((int)args[1]);
+      lock_release(&filesys_lock);
+      if (!success) {
+        syscall_exit(-1);
+      }
       break;
     case SYS_READ:
+      lock_acquire(&filesys_lock);
       validate_buffer_in_user_region(&args[1], 3 * sizeof(uint32_t));
       validate_buffer_in_user_region((void*)args[2], (unsigned)args[3]);
       f->eax = syscall_read((int)args[1], (void*)args[2], (unsigned)args[3]);
+      lock_release(&filesys_lock);
       break;
     case SYS_TELL:
+      lock_acquire(&filesys_lock);
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
       f->eax = syscall_tell((int)args[1]);
+      lock_release(&filesys_lock);
       break;
     case SYS_SEEK:
+      lock_acquire(&filesys_lock);
       validate_buffer_in_user_region(&args[1], 2 * sizeof(uint32_t));
       syscall_seek((int)args[1], (unsigned)args[2]);
+      lock_release(&filesys_lock);
       break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);
