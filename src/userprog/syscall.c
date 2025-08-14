@@ -202,6 +202,20 @@ static void validate_string_in_user_region(const char* string) {
     syscall_exit(-1);
 }
 
+/*
+ * Safe validation functions that return true on success, false on failure
+ * instead of calling syscall_exit directly. Use these when holding locks.
+ */
+static bool safe_validate_buffer_in_user_region(const void* buffer, size_t length) {
+  uintptr_t delta = PHYS_BASE - buffer;
+  return is_user_vaddr(buffer) && length <= delta;
+}
+
+static bool safe_validate_string_in_user_region(const char* string) {
+  uintptr_t delta = PHYS_BASE - (const void*)string;
+  return is_user_vaddr(string) && strnlen(string, delta) != delta;
+}
+
 static void syscall_handler(struct intr_frame* f) {
   uint32_t* args = f->esp;
   struct thread* t = thread_current();
@@ -245,34 +259,49 @@ static void syscall_handler(struct intr_frame* f) {
       break;
     case SYS_CREATE:
       lock_acquire(&filesys_lock);
-      validate_buffer_in_user_region(&args[1], 2 * sizeof(uint32_t));
-      validate_string_in_user_region((char*)args[1]);
+      if (!safe_validate_buffer_in_user_region(&args[1], 2 * sizeof(uint32_t)) ||
+          !safe_validate_string_in_user_region((char*)args[1])) {
+        lock_release(&filesys_lock);
+        syscall_exit(-1);
+      }
       f->eax = syscall_create((char*)args[1], (unsigned)args[2]);
       lock_release(&filesys_lock);
       break;
     case SYS_REMOVE:
       lock_acquire(&filesys_lock);
-      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
-      validate_string_in_user_region((char*)args[1]);
+      if (!safe_validate_buffer_in_user_region(&args[1], sizeof(uint32_t)) ||
+          !safe_validate_string_in_user_region((char*)args[1])) {
+        lock_release(&filesys_lock);
+        syscall_exit(-1);
+      }
       f->eax = syscall_remove((char*)args[1]);
       lock_release(&filesys_lock);
       break;
     case SYS_OPEN:
       lock_acquire(&filesys_lock);
-      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
-      validate_string_in_user_region((char*)args[1]);
+      if (!safe_validate_buffer_in_user_region(&args[1], sizeof(uint32_t)) ||
+          !safe_validate_string_in_user_region((char*)args[1])) {
+        lock_release(&filesys_lock);
+        syscall_exit(-1);
+      }
       f->eax = syscall_open((char*)args[1]);
       lock_release(&filesys_lock);
       break;
     case SYS_FILESIZE:
       lock_acquire(&filesys_lock);
-      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
+      if (!safe_validate_buffer_in_user_region(&args[1], sizeof(uint32_t))) {
+        lock_release(&filesys_lock);
+        syscall_exit(-1);
+      }
       f->eax = syscall_filesize((int)args[1]);
       lock_release(&filesys_lock);
       break;
     case SYS_CLOSE:
       lock_acquire(&filesys_lock);
-      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
+      if (!safe_validate_buffer_in_user_region(&args[1], sizeof(uint32_t))) {
+        lock_release(&filesys_lock);
+        syscall_exit(-1);
+      }
       bool success = syscall_close((int)args[1]);
       lock_release(&filesys_lock);
       if (!success) {
@@ -281,20 +310,29 @@ static void syscall_handler(struct intr_frame* f) {
       break;
     case SYS_READ:
       lock_acquire(&filesys_lock);
-      validate_buffer_in_user_region(&args[1], 3 * sizeof(uint32_t));
-      validate_buffer_in_user_region((void*)args[2], (unsigned)args[3]);
+      if (!safe_validate_buffer_in_user_region(&args[1], 3 * sizeof(uint32_t)) ||
+          !safe_validate_buffer_in_user_region((void*)args[2], (unsigned)args[3])) {
+        lock_release(&filesys_lock);
+        syscall_exit(-1);
+      }
       f->eax = syscall_read((int)args[1], (void*)args[2], (unsigned)args[3]);
       lock_release(&filesys_lock);
       break;
     case SYS_TELL:
       lock_acquire(&filesys_lock);
-      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
+      if (!safe_validate_buffer_in_user_region(&args[1], sizeof(uint32_t))) {
+        lock_release(&filesys_lock);
+        syscall_exit(-1);
+      }
       f->eax = syscall_tell((int)args[1]);
       lock_release(&filesys_lock);
       break;
     case SYS_SEEK:
       lock_acquire(&filesys_lock);
-      validate_buffer_in_user_region(&args[1], 2 * sizeof(uint32_t));
+      if (!safe_validate_buffer_in_user_region(&args[1], 2 * sizeof(uint32_t))) {
+        lock_release(&filesys_lock);
+        syscall_exit(-1);
+      }
       syscall_seek((int)args[1], (unsigned)args[2]);
       lock_release(&filesys_lock);
       break;
