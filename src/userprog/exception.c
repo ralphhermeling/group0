@@ -6,12 +6,15 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "userprog/syscall.h"
+#include "threads/synch.h"
+#include <syscall-nr.h>
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
 
 static void kill(struct intr_frame*);
 static void page_fault(struct intr_frame*);
+static bool syscall_uses_filesys_lock(int syscall_num);
 
 /* Registers handlers for interrupts that can be caused by user
    programs.
@@ -147,8 +150,13 @@ static void page_fault(struct intr_frame* f) {
    * the kernel and end up here. These checks below will allow us to determine
    * that this happened and terminate the process appropriately.
    */
-  if (!user && t->in_syscall && is_user_vaddr(fault_addr))
+  if (!user && t->current_syscall != -1 && is_user_vaddr(fault_addr)) {
+    /* Release filesystem lock if current syscall was using it */
+    if (syscall_uses_filesys_lock(t->current_syscall)) {
+      lock_release(&filesys_lock);
+    }
     syscall_exit(-1);
+  }
 
   /*
    * If we faulted in user mode, then we assume it's an invalid memory access
@@ -166,4 +174,21 @@ static void page_fault(struct intr_frame* f) {
          not_present ? "not present" : "rights violation", write ? "writing" : "reading",
          user ? "user" : "kernel");
   kill(f);
+}
+
+/* Returns true if the given syscall number uses the filesystem lock */
+static bool syscall_uses_filesys_lock(int syscall_num) {
+  switch (syscall_num) {
+    case SYS_CREATE:
+    case SYS_REMOVE:
+    case SYS_OPEN:
+    case SYS_FILESIZE:
+    case SYS_READ:
+    case SYS_WRITE:
+    case SYS_TELL:
+    case SYS_CLOSE:
+      return true;
+    default:
+      return false;
+  }
 }

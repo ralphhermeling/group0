@@ -34,8 +34,7 @@ int init_file_descriptor(
     struct file* file); // Create new file descriptor, add to process's file table, return fd number
 void destroy_file_descriptor(
     struct file_descriptor* fd_entry); // Remove file descriptor from table and free memory
-static struct lock filesys_lock;       // Global lock protecting all file system operations
-//
+struct lock filesys_lock;
 
 struct file_descriptor* find_file_descriptor(int fd) {
   if (fd < FIRST_FILE_FD) {
@@ -77,13 +76,27 @@ void syscall_exit(int status) {
 
 static pid_t syscall_exec(char* cmd_line) { return process_execute(cmd_line); }
 
-static unsigned syscall_write(int fd, void* buffer, unsigned size) {
-  /* Only support STDOUT for now */
-  ASSERT(fd == 1);
-
-  /* Write number of size character of buffer to STDOUT */
-  putbuf(buffer, size);
-  return size;
+static int syscall_write(int fd, void* buffer, unsigned size) {
+  if (size <= 0) {
+    return 0;
+  }
+  if (fd == STDIN_FILENO) {
+    return -1;
+  }
+  if (fd == STDOUT_FILENO) {
+    /* Write number of size character of buffer to STDOUT */
+    putbuf(buffer, size);
+    return size;
+  }
+  lock_acquire(&filesys_lock);
+  struct file_descriptor* file_descriptor = find_file_descriptor(fd);
+  if (file_descriptor == NULL) {
+    lock_release(&filesys_lock);
+    return -1;
+  }
+  int bytes_written = file_write(file_descriptor->file, buffer, size);
+  lock_release(&filesys_lock);
+  return bytes_written;
 }
 
 static bool syscall_create(char* file, unsigned initial_size) {
@@ -212,8 +225,7 @@ static void validate_string_in_user_region(const char* string) {
 static void syscall_handler(struct intr_frame* f) {
   uint32_t* args = f->esp;
   struct thread* t = thread_current();
-  t->in_syscall = true;
-
+  validate_buffer_in_user_region(args, sizeof(uint32_t));
   /*
    * The following print statement, if uncommented, will print out the syscall
    * number whenever a process enters a system call. You might find it useful
@@ -221,7 +233,7 @@ static void syscall_handler(struct intr_frame* f) {
    * include it in your final submission.
    */
   /* printf("System call number: %d\n", args[0]); */
-  validate_buffer_in_user_region(args, sizeof(uint32_t));
+  t->current_syscall = args[0];
   switch (args[0]) {
     case SYS_EXIT:
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
@@ -285,5 +297,5 @@ static void syscall_handler(struct intr_frame* f) {
       break;
   }
 
-  t->in_syscall = false;
+  t->current_syscall = -1;
 }

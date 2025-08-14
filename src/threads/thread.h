@@ -96,7 +96,7 @@ struct thread {
 #ifdef USERPROG
   /* Owned by process.c. */
   struct process* pcb; /* Process control block if this thread is a userprog */
-  bool in_syscall;     /* Stores if we are in a syscall. */
+  int current_syscall; /* Stores current syscall number, -1 if not in syscall. */
 #endif
 
   /* Owned by thread.c. */
