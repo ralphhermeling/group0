@@ -142,6 +142,18 @@ static int syscall_filesize(int fd) {
   return file_size;
 }
 
+static void syscall_close(int fd) {
+  lock_acquire(&filesys_lock);
+  struct file_descriptor* file_descriptor = find_file_descriptor(fd);
+  if (file_descriptor == NULL) {
+    lock_release(&filesys_lock);
+    syscall_exit(-1);
+  }
+  list_remove(&file_descriptor->elem);
+  free(file_descriptor);
+  lock_release(&filesys_lock);
+}
+
 /*
  * This does not check that the buffer consists of only mapped pages; it merely
  * checks the buffer exists entirely below PHYS_BASE.
@@ -219,6 +231,10 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_FILESIZE:
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
       f->eax = syscall_filesize((int)args[1]);
+      break;
+    case SYS_CLOSE:
+      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
+      syscall_close((int)args[1]);
       break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);
