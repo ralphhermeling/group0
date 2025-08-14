@@ -100,10 +100,7 @@ static int syscall_write(int fd, void* buffer, unsigned size) {
 }
 
 static bool syscall_create(char* file, unsigned initial_size) {
-  lock_acquire(&filesys_lock);
-  bool success = filesys_create(file, initial_size);
-  lock_release(&filesys_lock);
-  return success;
+  return filesys_create(file, initial_size);
 }
 
 static bool syscall_remove(char* file) {
@@ -121,16 +118,13 @@ static int syscall_open(char* file) {
     return -1;
   }
 
-  lock_acquire(&filesys_lock);
   struct file* f = filesys_open(file);
   if (f == NULL) {
-    lock_release(&filesys_lock);
     return -1;
   }
 
   struct file_descriptor* file_descriptor = malloc(sizeof(struct file_descriptor));
   if (file_descriptor == NULL) {
-    lock_release(&filesys_lock);
     return -1;
   }
 
@@ -139,7 +133,6 @@ static int syscall_open(char* file) {
   file_descriptor->file = f;
 
   list_push_back(&t->pcb->open_files, &file_descriptor->elem);
-  lock_release(&filesys_lock);
   return file_descriptor->fd;
 }
 
@@ -273,9 +266,11 @@ static void syscall_handler(struct intr_frame* f) {
       f->eax = process_wait((int)args[1]);
       break;
     case SYS_CREATE:
+      lock_acquire(&filesys_lock);
       validate_buffer_in_user_region(&args[1], 2 * sizeof(uint32_t));
       validate_string_in_user_region((char*)args[1]);
       f->eax = syscall_create((char*)args[1], (unsigned)args[2]);
+      lock_release(&filesys_lock);
       break;
     case SYS_REMOVE:
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
@@ -283,9 +278,11 @@ static void syscall_handler(struct intr_frame* f) {
       f->eax = syscall_remove((char*)args[1]);
       break;
     case SYS_OPEN:
+      lock_acquire(&filesys_lock);
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
       validate_string_in_user_region((char*)args[1]);
       f->eax = syscall_open((char*)args[1]);
+      lock_release(&filesys_lock);
       break;
     case SYS_FILESIZE:
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
