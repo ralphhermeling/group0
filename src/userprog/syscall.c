@@ -177,6 +177,18 @@ static int syscall_read(int fd, void* buffer, unsigned size) {
   return bytes_read;
 }
 
+static int syscall_tell(int fd) {
+  lock_acquire(&filesys_lock);
+  struct file_descriptor* file_descriptor = find_file_descriptor(fd);
+  if (file_descriptor == NULL) {
+    lock_release(&filesys_lock);
+    return -1;
+  }
+  int result = file_tell(file_descriptor->file);
+  lock_release(&filesys_lock);
+  return result;
+}
+
 /*
  * This does not check that the buffer consists of only mapped pages; it merely
  * checks the buffer exists entirely below PHYS_BASE.
@@ -263,6 +275,10 @@ static void syscall_handler(struct intr_frame* f) {
       validate_buffer_in_user_region(&args[1], 3 * sizeof(uint32_t));
       validate_buffer_in_user_region((void*)args[2], (unsigned)args[3]);
       f->eax = syscall_read((int)args[1], (void*)args[2], (unsigned)args[3]);
+      break;
+    case SYS_TELL:
+      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
+      f->eax = syscall_tell((int)args[1]);
       break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);
