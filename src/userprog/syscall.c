@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <syscall-nr.h>
+#include "devices/input.h"
 #include "devices/shutdown.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -154,6 +155,28 @@ static void syscall_close(int fd) {
   lock_release(&filesys_lock);
 }
 
+static int syscall_read(int fd, void* buffer, unsigned size) {
+  lock_acquire(&filesys_lock);
+  if (fd == STDIN_FILENO) {
+    uint8_t* byte_buffer = (uint8_t*)buffer;
+    for (unsigned i = 0; i < size; i++) {
+      byte_buffer[i] = input_getc();
+    }
+    lock_release(&filesys_lock);
+    return (int)size;
+  }
+
+  struct file_descriptor* file_descriptor = find_file_descriptor(fd);
+  if (file_descriptor == NULL) {
+    lock_release(&filesys_lock);
+    return -1;
+  }
+
+  int bytes_read = file_read(file_descriptor->file, buffer, size);
+  lock_release(&filesys_lock);
+  return bytes_read;
+}
+
 /*
  * This does not check that the buffer consists of only mapped pages; it merely
  * checks the buffer exists entirely below PHYS_BASE.
@@ -235,6 +258,11 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_CLOSE:
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
       syscall_close((int)args[1]);
+      break;
+    case SYS_READ:
+      validate_buffer_in_user_region(&args[1], 3 * sizeof(uint32_t));
+      validate_buffer_in_user_region((void*)args[2], (unsigned)args[3]);
+      f->eax = syscall_read((int)args[1], (void*)args[2], (unsigned)args[3]);
       break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);
