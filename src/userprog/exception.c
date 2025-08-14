@@ -152,7 +152,7 @@ static void page_fault(struct intr_frame* f) {
    */
   if (!user && t->current_syscall != -1 && is_user_vaddr(fault_addr)) {
     /* Release filesystem lock if current syscall was using it */
-    if (syscall_uses_filesys_lock(t->current_syscall)) {
+    if (t->current_syscall > 0 && syscall_uses_filesys_lock(t->current_syscall)) {
       lock_release(&filesys_lock);
     }
     syscall_exit(-1);

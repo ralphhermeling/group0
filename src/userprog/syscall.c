@@ -236,6 +236,7 @@ static void validate_string_in_user_region(const char* string) {
 static void syscall_handler(struct intr_frame* f) {
   uint32_t* args = f->esp;
   struct thread* t = thread_current();
+  t->current_syscall = 0; /* Mark that we're in syscall handler but don't know which yet */
   validate_buffer_in_user_region(args, sizeof(uint32_t));
   /*
    * The following print statement, if uncommented, will print out the syscall
