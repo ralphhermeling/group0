@@ -187,6 +187,7 @@ static bool syscall_uses_filesys_lock(int syscall_num) {
     case SYS_WRITE:
     case SYS_TELL:
     case SYS_CLOSE:
+    case SYS_SEEK:
       return true;
     default:
       return false;
