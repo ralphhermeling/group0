@@ -34,6 +34,24 @@ int init_file_descriptor(
 void destroy_file_descriptor(
     struct file_descriptor* fd_entry); // Remove file descriptor from table and free memory
 static struct lock filesys_lock;       // Global lock protecting all file system operations
+//
+
+struct file_descriptor* find_file_descriptor(int fd) {
+  if (fd < FIRST_FILE_FD) {
+    return NULL;
+  }
+
+  struct process* pcb = thread_current()->pcb;
+
+  struct list_elem* e;
+  for (e = list_begin(&pcb->open_files); e != list_end(&pcb->open_files); e = list_next(e)) {
+    struct file_descriptor* file_descriptor = list_entry(e, struct file_descriptor, elem);
+    if (file_descriptor != NULL && file_descriptor->fd == fd) {
+      return file_descriptor;
+    }
+  }
+  return NULL;
+}
 
 void destroy_file_descriptor_table(struct process* pcb) {
   lock_acquire(&filesys_lock);
@@ -111,6 +129,19 @@ static int syscall_open(char* file) {
   return file_descriptor->fd;
 }
 
+static int syscall_filesize(int fd) {
+  lock_acquire(&filesys_lock);
+  struct file_descriptor* file_descriptor = find_file_descriptor(fd);
+  if (file_descriptor == NULL) {
+    lock_release(&filesys_lock);
+    return -1;
+  }
+
+  int file_size = file_length(file_descriptor->file);
+  lock_release(&filesys_lock);
+  return file_size;
+}
+
 /*
  * This does not check that the buffer consists of only mapped pages; it merely
  * checks the buffer exists entirely below PHYS_BASE.
@@ -184,6 +215,10 @@ static void syscall_handler(struct intr_frame* f) {
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
       validate_string_in_user_region((char*)args[1]);
       f->eax = syscall_open((char*)args[1]);
+      break;
+    case SYS_FILESIZE:
+      validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
+      f->eax = syscall_filesize((int)args[1]);
       break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);
