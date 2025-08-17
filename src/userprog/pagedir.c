@@ -222,3 +222,48 @@ static void invalidate_pagedir(uint32_t* pd) {
     pagedir_activate(pd);
   }
 }
+
+/* Creates a copy of page directory SRC, copying all mapped pages.
+   Returns the new page directory, or a null pointer if memory
+   allocation fails. */
+uint32_t* pagedir_copy(uint32_t* src) {
+  uint32_t* dst;
+  uint32_t* src_pde;
+  uint32_t* dst_pde;
+
+  ASSERT(src != NULL);
+
+  dst = pagedir_create();
+  if (dst == NULL)
+    return NULL;
+
+  for (src_pde = src, dst_pde = dst; src_pde < src + pd_no(PHYS_BASE); src_pde++, dst_pde++) {
+    if (*src_pde & PTE_P) {
+      uint32_t* src_pt = pde_get_pt(*src_pde);
+      uint32_t* dst_pt = palloc_get_page(0);
+      if (dst_pt == NULL) {
+        pagedir_destroy(dst);
+        return NULL;
+      }
+
+      uint32_t* src_pte;
+      uint32_t* dst_pte;
+      for (src_pte = src_pt, dst_pte = dst_pt; src_pte < src_pt + PGSIZE / sizeof *src_pte;
+           src_pte++, dst_pte++) {
+        if (*src_pte & PTE_P) {
+          void* src_page = pte_get_page(*src_pte);
+          void* dst_page = palloc_get_page(PAL_USER);
+          if (dst_page == NULL) {
+            palloc_free_page(dst_pt);
+            pagedir_destroy(dst);
+            return NULL;
+          }
+          memcpy(dst_page, src_page, PGSIZE);
+          *dst_pte = pte_create_user(dst_page, (*src_pte & PTE_W) != 0);
+        }
+      }
+      *dst_pde = pde_create(dst_pt);
+    }
+  }
+  return dst;
+}
