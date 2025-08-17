@@ -731,6 +731,14 @@ static bool setup_stack(void** esp) {
   return success;
 }
 
+struct fork_info {
+  struct intr_frame* parent_f;
+  struct semaphore fork_sema;
+  bool fork_success;
+  struct process* parent_pcb;
+  struct process* child_pcb;
+};
+
 pid_t process_fork(struct intr_frame* UNUSED f) { return -1; }
 
 /* Adds a mapping from user virtual address UPAGE to kernel
