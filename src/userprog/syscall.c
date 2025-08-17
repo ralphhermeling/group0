@@ -182,6 +182,8 @@ static void syscall_seek(int fd, unsigned position) {
   file_seek(file_descriptor->file, position);
 }
 
+static pid_t syscall_fork(struct intr_frame* f) { return process_fork(f); }
+
 /*
  * This does not check that the buffer consists of only mapped pages; it merely
  * checks the buffer exists entirely below PHYS_BASE.
@@ -335,6 +337,9 @@ static void syscall_handler(struct intr_frame* f) {
       }
       syscall_seek((int)args[1], (unsigned)args[2]);
       lock_release(&filesys_lock);
+      break;
+    case SYS_FORK:
+      f->eax = syscall_fork(f);
       break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);

@@ -3,6 +3,7 @@
 
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include "threads/interrupt.h"
 #include <stdint.h>
 
 // At most 8MB can be allocated to the stack
@@ -66,3 +67,5 @@ void pthread_exit_main(void);
 struct child_info* create_child_info(pid_t pid);  /* Allocate and initialize child_info */
 void destroy_child_info(struct child_info* info); /* Free child_info structure */
 #endif                                            /* userprog/process.h */
+
+pid_t process_fork(struct intr_frame*);
