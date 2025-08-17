@@ -733,13 +733,63 @@ static bool setup_stack(void** esp) {
 
 struct fork_info {
   struct intr_frame* parent_f;
-  struct semaphore fork_sema;
-  bool fork_success;
+  struct semaphore* fork_sema;
+  bool* fork_success;
   struct process* parent_pcb;
   struct process* child_pcb;
 };
 
-pid_t process_fork(struct intr_frame* UNUSED f) { return -1; }
+static void fork_child_process(void* UNUSED fork_info) {
+
+};
+
+pid_t process_fork(struct intr_frame* f) {
+  char* fn_copy;
+  tid_t tid;
+
+  /* Make a copy of FILE_NAME.
+     Otherwise there's a race between the caller and load(). */
+  fn_copy = palloc_get_page(0);
+  if (fn_copy == NULL)
+    return TID_ERROR;
+  strlcpy(fn_copy, thread_current()->pcb->process_name, PGSIZE);
+
+  struct semaphore fork_sema;
+  sema_init(&fork_sema, 0);
+  bool fork_success = false;
+  struct fork_info fork_info;
+
+  fork_info.parent_f = f;
+  fork_info.fork_sema = &fork_sema;
+  fork_info.fork_success = &fork_success;
+  fork_info.parent_pcb = thread_current()->pcb;
+  fork_info.child_pcb = NULL;
+
+  lock_acquire(&fork_info.parent_pcb->children_lock);
+  /* Create a new thread to execute FILE_NAME. */
+  tid = thread_create(fn_copy, PRI_DEFAULT, fork_child_process, &fork_info);
+  if (tid == TID_ERROR) {
+    palloc_free_page(fn_copy);
+    return -1;
+  }
+
+  sema_down(&fork_sema);
+
+  if (!fork_success) {
+    lock_release(&fork_info.parent_pcb->children_lock);
+    palloc_free_page(fn_copy);
+    return -1;
+  }
+
+  /* Add succesfully loaded child to parent's pcb */
+  ASSERT(fork_info.child_pcb != NULL);
+  struct child_info* new_child_info = create_child_info(tid);
+  new_child_info->pcb = fork_info.child_pcb;
+  list_push_back(&fork_info.parent_pcb->children, &new_child_info->elem);
+  lock_release(&fork_info.parent_pcb->children_lock);
+
+  return tid;
+}
 
 /* Adds a mapping from user virtual address UPAGE to kernel
    virtual address KPAGE to the page table.
