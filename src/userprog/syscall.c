@@ -218,6 +218,29 @@ static bool safe_validate_string_in_user_region(const char* string) {
   return is_user_vaddr(string) && strnlen(string, delta) != delta;
 }
 
+bool copy_file_descriptors(struct process* child_pcb, struct process* parent_pcb) {
+  lock_acquire(&filesys_lock);
+
+  struct list_elem* e;
+  for (e = list_begin(&parent_pcb->open_files); e != list_end(&parent_pcb->open_files);
+       e = list_next(e)) {
+    struct file_descriptor* parent_fd = list_entry(e, struct file_descriptor, elem);
+
+    struct file_descriptor* child_fd = malloc(sizeof(struct file_descriptor));
+    if (child_fd == NULL) {
+      lock_release(&filesys_lock);
+      return false;
+    }
+
+    child_fd->fd = parent_fd->fd;
+    child_fd->file = parent_fd->file;
+    list_push_back(&child_pcb->open_files, &child_fd->elem);
+  }
+
+  lock_release(&filesys_lock);
+  return true;
+}
+
 static void syscall_handler(struct intr_frame* f) {
   uint32_t* args = f->esp;
   struct thread* t = thread_current();
@@ -258,6 +281,9 @@ static void syscall_handler(struct intr_frame* f) {
     case SYS_WAIT:
       validate_buffer_in_user_region(&args[1], sizeof(uint32_t));
       f->eax = process_wait((int)args[1]);
+      break;
+    case SYS_FORK:
+      f->eax = process_fork(f);
       break;
     case SYS_CREATE:
       lock_acquire(&filesys_lock);
@@ -337,9 +363,6 @@ static void syscall_handler(struct intr_frame* f) {
       }
       syscall_seek((int)args[1], (unsigned)args[2]);
       lock_release(&filesys_lock);
-      break;
-    case SYS_FORK:
-      f->eax = syscall_fork(f);
       break;
     default:
       printf("Unimplemented system call: %d\n", (int)args[0]);
