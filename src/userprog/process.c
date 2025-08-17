@@ -759,13 +759,21 @@ static void fork_child_process(void* fork_info_) {
     list_init(&child_pcb->open_files);
     child_pcb->next_fd = parent_pcb->next_fd;
     child_pcb->main_thread = t;
-    child_pcb->executable_file = parent_pcb->executable_file;
+    child_pcb->executable_file = NULL;
+    if (parent_pcb->executable_file != NULL) {
+      child_pcb->executable_file = filesys_open(parent_pcb->process_name);
+      if (child_pcb->executable_file != NULL) {
+        file_deny_write(child_pcb->executable_file);
+      }
+    }
     strlcpy(child_pcb->process_name, parent_pcb->process_name, 16);
 
+    // printf("copy parent address space to child \n");
     child_pcb->pagedir = pagedir_copy(parent_pcb->pagedir);
     success = child_pcb->pagedir != NULL;
   }
 
+  // printf("copy file descriptors to child \n");
   if (success) {
     success = copy_file_descriptors(child_pcb, parent_pcb);
   }
@@ -784,11 +792,37 @@ static void fork_child_process(void* fork_info_) {
   sema_up(info->fork_sema);
 
   if (!success) {
+    // printf("child failed exiting thread \n");
     thread_exit();
   }
 
-  struct intr_frame child_if = *parent_if;
-  child_if.eax = 0;
+  // printf("copying parent's interrupt frame values to child interrupt frame \n");
+  struct intr_frame child_if_;
+  child_if_.edi = parent_if->edi;
+  child_if_.esi = parent_if->esi;
+  child_if_.ebp = parent_if->ebp;
+  child_if_.esp_dummy = parent_if->esp_dummy;
+  child_if_.ebx = parent_if->ebx;
+  child_if_.edx = parent_if->edx;
+  child_if_.ecx = parent_if->ecx;
+  child_if_.eax = 0;
+  child_if_.gs = parent_if->gs;
+  child_if_.fs = parent_if->fs;
+  child_if_.es = parent_if->es;
+  child_if_.ds = parent_if->ds;
+  child_if_.vec_no = parent_if->vec_no;
+  child_if_.error_code = parent_if->error_code;
+  child_if_.frame_pointer = parent_if->frame_pointer;
+  child_if_.eip = parent_if->eip;
+  child_if_.cs = parent_if->cs;
+  child_if_.eflags = parent_if->eflags;
+  child_if_.esp = parent_if->esp;
+  child_if_.ss = parent_if->ss;
+
+  // printf("activating child page directory and jumping to user mode\n");
+
+  /* Activate the child's page directory */
+  pagedir_activate(child_pcb->pagedir);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -796,7 +830,7 @@ static void fork_child_process(void* fork_info_) {
      arguments on the stack in the form of a `struct intr_frame',
      we just point the stack pointer (%esp) to our stack frame
      and jump to it. */
-  asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&child_if) : "memory");
+  asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&child_if_) : "memory");
   NOT_REACHED();
 };
 
