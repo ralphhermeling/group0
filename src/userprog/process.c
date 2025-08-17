@@ -739,8 +739,65 @@ struct fork_info {
   struct process* child_pcb;
 };
 
-static void fork_child_process(void* UNUSED fork_info) {
+static void fork_child_process(void* fork_info_) {
+  struct fork_info* info = (struct fork_info*)fork_info_;
+  struct process* parent_pcb = info->parent_pcb;
+  struct intr_frame* parent_if = info->parent_f;
 
+  struct thread* t = thread_current();
+  struct process* child_pcb = malloc(sizeof(struct process));
+  bool success = child_pcb != NULL;
+
+  if (success) {
+    child_pcb->pagedir = NULL;
+    t->pcb = child_pcb;
+
+    list_init(&child_pcb->children);
+    lock_init(&child_pcb->children_lock);
+    child_pcb->parent_pcb = parent_pcb;
+    child_pcb->exit_status = -1;
+    list_init(&child_pcb->open_files);
+    child_pcb->next_fd = parent_pcb->next_fd;
+    child_pcb->main_thread = t;
+    child_pcb->executable_file = parent_pcb->executable_file;
+    strlcpy(child_pcb->process_name, parent_pcb->process_name, 16);
+
+    child_pcb->pagedir = pagedir_copy(parent_pcb->pagedir);
+    success = child_pcb->pagedir != NULL;
+  }
+
+  if (success) {
+    success = copy_file_descriptors(child_pcb, parent_pcb);
+  }
+
+  if (!success && child_pcb != NULL) {
+    if (child_pcb->pagedir != NULL) {
+      pagedir_destroy(child_pcb->pagedir);
+    }
+    struct process* pcb_to_free = t->pcb;
+    t->pcb = NULL;
+    free(pcb_to_free);
+  }
+
+  info->child_pcb = success ? child_pcb : NULL;
+  *(info->fork_success) = success;
+  sema_up(info->fork_sema);
+
+  if (!success) {
+    thread_exit();
+  }
+
+  struct intr_frame child_if = *parent_if;
+  child_if.eax = 0;
+
+  /* Start the user process by simulating a return from an
+     interrupt, implemented by intr_exit (in
+     threads/intr-stubs.S).  Because intr_exit takes all of its
+     arguments on the stack in the form of a `struct intr_frame',
+     we just point the stack pointer (%esp) to our stack frame
+     and jump to it. */
+  asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&child_if) : "memory");
+  NOT_REACHED();
 };
 
 pid_t process_fork(struct intr_frame* f) {
