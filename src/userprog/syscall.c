@@ -234,6 +234,7 @@ bool copy_file_descriptors(struct process* child_pcb, struct process* parent_pcb
 
     child_fd->fd = parent_fd->fd;
     child_fd->file = parent_fd->file;
+    file_ref(child_fd->file); /* Increment reference count */
     list_push_back(&child_pcb->open_files, &child_fd->elem);
   }
 
