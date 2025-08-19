@@ -91,7 +91,10 @@ struct thread {
   struct list_elem allelem;  /* List element for all threads list. */
 
   /* Shared between thread.c and synch.c. */
-  struct list_elem elem; /* List element. */
+  struct list_elem elem;      /* List element. */
+  struct list donations;      /* List of donations sorted by priority (highest first) */
+  struct thread* donating_to; /* Thread this thread is donating to (for nested donation) */
+  struct list held_locks;     /* List of locks this thread currently holds */
 
   int64_t wake_time;          /* Time when thread should wake up from sleep */
   struct list_elem sleepelem; /* List element for sleep_list */
@@ -104,6 +107,14 @@ struct thread {
 
   /* Owned by thread.c. */
   unsigned magic; /* Detects stack overflow. */
+};
+
+/* Donation structure to track priority donations */
+struct donation {
+  int donated_priority;  /* Priority value being donated */
+  struct thread* donor;  /* Thread making the donation */
+  struct lock* lock;     /* Lock associated with this donation */
+  struct list_elem elem; /* List element for donations list */
 };
 
 /* Types of scheduler that the user can request the kernel
@@ -146,6 +157,7 @@ typedef void thread_action_func(struct thread* t, void* aux);
 void thread_foreach(thread_action_func*, void*);
 
 int thread_get_priority(void);
+int a_thread_get_priority(struct thread* t);
 void thread_set_priority(int);
 
 int thread_get_nice(void);

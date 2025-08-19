@@ -4,6 +4,7 @@
 #include <random.h>
 #include <stdio.h>
 #include <string.h>
+#include "list.h"
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
@@ -23,6 +24,10 @@
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list fifo_ready_list;
+
+/* List of processes in THREAD_READY state sorted by, effective
+ * priority (=max(base_priority, highest donated priority)) */
+static struct list priority_ready_list;
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
@@ -90,6 +95,8 @@ scheduler_func* scheduler_jump_table[8] = {thread_schedule_fifo,     thread_sche
                                            thread_schedule_reserved, thread_schedule_reserved,
                                            thread_schedule_reserved, thread_schedule_reserved};
 
+static bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux);
+
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -108,6 +115,7 @@ void thread_init(void) {
 
   lock_init(&tid_lock);
   list_init(&fifo_ready_list);
+  list_init(&priority_ready_list);
   list_init(&all_list);
 
   /* Set up a thread structure for the running thread. */
@@ -226,6 +234,14 @@ void thread_block(void) {
   schedule();
 }
 
+static bool thread_priority_less(const struct list_elem* a, const struct list_elem* b,
+                                 UNUSED void* aux) {
+  struct thread* thread_a = list_entry(a, struct thread, elem);
+  struct thread* thread_b = list_entry(b, struct thread, elem);
+
+  return a_thread_get_priority(thread_a) < a_thread_get_priority(thread_b);
+}
+
 /* Places a thread on the ready structure appropriate for the
    current active scheduling policy.
    
@@ -236,7 +252,9 @@ static void thread_enqueue(struct thread* t) {
 
   if (active_sched_policy == SCHED_FIFO)
     list_push_back(&fifo_ready_list, &t->elem);
-  else
+  else if (active_sched_policy == SCHED_PRIO) {
+    list_insert_ordered(&priority_ready_list, &t->elem, thread_priority_less, NULL);
+  } else
     PANIC("Unimplemented scheduling policy value: %d", active_sched_policy);
 }
 
@@ -332,6 +350,22 @@ void thread_set_priority(int new_priority) { thread_current()->priority = new_pr
 
 /* Returns the current thread's priority. */
 int thread_get_priority(void) { return thread_current()->priority; }
+
+/* Returns the thread's effective priority. */
+int a_thread_get_priority(struct thread* t) {
+  int base_priority = t->priority;
+  if (list_empty(&t->donations)) {
+    return base_priority;
+  }
+
+  int donated_priority =
+      list_entry(list_end(&t->donations), struct donation, elem)->donated_priority;
+  if (donated_priority > base_priority) {
+    return donated_priority;
+  } else {
+    return base_priority;
+  }
+}
 
 /* Sets the current thread's nice value to NICE. */
 void thread_set_nice(int nice UNUSED) { /* Not yet implemented. */ }
@@ -431,6 +465,9 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->current_syscall = -1;
   t->wake_time = 0;
   t->magic = THREAD_MAGIC;
+  t->donating_to = NULL;
+  list_init(&t->donations);
+  list_init(&t->held_locks);
 
   old_level = intr_disable();
   list_push_back(&all_list, &t->allelem);
@@ -458,7 +495,11 @@ static struct thread* thread_schedule_fifo(void) {
 
 /* Strict priority scheduler */
 static struct thread* thread_schedule_prio(void) {
-  PANIC("Unimplemented scheduler policy: \"-sched=prio\"");
+  if (!list_empty(&priority_ready_list)) {
+    return list_entry(list_pop_back(&priority_ready_list), struct thread, elem);
+  } else {
+    return idle_thread;
+  }
 }
 
 /* Fair priority scheduler */
