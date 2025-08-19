@@ -429,6 +429,7 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->priority = priority;
   t->pcb = NULL;
   t->current_syscall = -1;
+  t->wake_time = 0;
   t->magic = THREAD_MAGIC;
 
   old_level = intr_disable();
