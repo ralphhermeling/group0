@@ -9,7 +9,7 @@
 struct thread {
     // ... existing fields ...
     int64_t wake_time;                  /* Time when thread should wake up from sleep */
-    struct list_elem sleep_elem;        /* List element for sleep_list */
+    struct list_elem sleepelem;        /* List element for sleep_list */
 };
 ```
 

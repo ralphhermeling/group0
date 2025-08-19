@@ -4,6 +4,7 @@
 #include <round.h>
 #include <stdio.h>
 #include "devices/pit.h"
+#include "list.h"
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
@@ -23,16 +24,21 @@ static int64_t ticks;
 /* Number of loops per timer tick.
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
+static struct list sleep_list; /* List of sleeping threads ordered by wake_time */
 
 static intr_handler_func timer_interrupt;
 static bool too_many_loops(unsigned loops);
 static void busy_wait(int64_t loops);
 static void real_time_sleep(int64_t num, int32_t denom);
 static void real_time_delay(int64_t num, int32_t denom);
+/* Comparison function for ordered insertion */
+static bool wake_time_less(const struct list_elem* a, const struct list_elem* b, void* aux);
+static void timer_wake_sleeping_threads(void); /* Wake threads whose time has expired */
 
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
 void timer_init(void) {
+  list_init(&sleep_list);
   pit_configure_channel(0, 2, TIMER_FREQ);
   intr_register_ext(0x20, timer_interrupt, "8254 Timer");
 }
@@ -189,4 +195,25 @@ static void real_time_delay(int64_t num, int32_t denom) {
      the possibility of overflow. */
   ASSERT(denom % 1000 == 0);
   busy_wait(loops_per_tick * num / 1000 * TIMER_FREQ / (denom / 1000));
+}
+
+static bool wake_time_less(const struct list_elem* a, const struct list_elem* b, void* aux) {
+  struct thread* thread_a = list_entry(a, struct thread, sleepelem);
+  struct thread* thread_b = list_entry(b, struct thread, sleepelem);
+  return thread_a->wake_time < thread_b->wake_time;
+}
+
+/* Wake threads whose time has expired */
+static void timer_wake_sleeping_threads() {
+  ASSERT(intr_get_level() == INTR_OFF);
+  int64_t ticks = timer_ticks();
+  while (!list_empty(&sleep_list)) {
+    struct list_elem* e = list_front(&sleep_list);
+    struct thread* t = list_entry(e, struct thread, sleepelem);
+    if (t->wake_time > ticks) {
+      break;
+    }
+    list_remove(e);
+    thread_unblock(t);
+  }
 }
