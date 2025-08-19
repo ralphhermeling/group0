@@ -28,38 +28,18 @@ struct lock {
     struct semaphore semaphore;       // Semaphore for blocking/unblocking
     struct list_elem elem;            // For held_locks list
 };
-
-struct semaphore {
-    unsigned value;                   // Current semaphore value
-    struct list waiters;              // Waiters sorted by priority (highest first)
-};
-
-struct condition {
-    struct list waiters;              // Condition waiters sorted by priority
-};
-
-// New structure for condition variable waiters
-struct condition_waiter {
-    struct semaphore semaphore;       // Semaphore for this waiter
-    struct thread *thread;            // Thread waiting on condition
-    struct list_elem elem;            // List element for waiters list
-};
 ```
 
 ### New Functions
 
 ```c
 // threads/thread.c
-static void thread_donate_priority(struct thread *donor, struct thread *donee, struct lock *lock);
-static void thread_remove_donations_for_lock(struct thread *thread, struct lock *lock);
-static void thread_update_donated_priority(struct thread *thread);
-static void thread_update_donation_chain(struct thread *t);
 static bool donation_priority_greater(const struct list_elem *a, const struct list_elem *b, void *aux);
+static donation* find_donation_by_donor_and_donee(struct thread* donor,struct thread* donee);
 static bool thread_priority_greater(const struct list_elem *a, const struct list_elem *b, void *aux);
 
 // threads/synch.c  
 static void sema_insert_ordered(struct list *waiters, struct thread *thread);
-static void condition_insert_ordered(struct list *waiters, struct condition_waiter *waiter);
 ```
 
 ### Modified Global Variables
@@ -185,11 +165,81 @@ void lock_release(struct lock *lock) {
 }
 ```
 
+### Recursive Donation Example
+
+Let's trace through a concrete example to verify our solution handles nested donations correctly:
+
+**Scenario**: Three threads with a chain of lock dependencies:
+- Thread H (priority 60) wants Lock A, held by M
+- Thread M (priority 30) wants Lock B, held by L  
+- Thread L (priority 10) runs
+
+**Step 1: H calls `lock_acquire(Lock A)`**
+```
+H blocks on Lock A (held by M)
+- Create donation: {priority: 60, donor: H, lock: Lock A}
+- Add to M->donations: [donation(60, H, Lock A)]
+- H->donating_to = M
+- M's effective priority = max(30, 60) = 60
+
+Recursive donation:
+- M->donating_to = L (M is waiting on Lock B)
+- Find M's existing donation to L for Lock B
+- Update M's donation to L: {priority: 60, donor: M, lock: Lock B}
+- L->donations: [donation(60, M, Lock B)]
+- L's effective priority = max(10, 60) = 60
+```
+
+**Step 2: Current state after H blocks**
+```
+Thread priorities:
+- H: blocked (base: 60)
+- M: effective 60 (base: 30, donated: 60 from H)  
+- L: effective 60 (base: 10, donated: 60 from M)
+
+Donation chains:
+- H donates 60 to M for Lock A
+- M donates 60 to L for Lock B (propagated from H's donation)
+
+Running: L (priority 60)
+```
+
+**Step 3: L releases Lock B**
+```
+L calls lock_release(Lock B):
+- Remove donations for Lock B from L->donations
+- L->donations becomes empty []
+- L's effective priority = max(10, none) = 10
+- M gets Lock B, M->donating_to = NULL
+- M's effective priority = max(30, 60) = 60 (still has H's donation)
+
+Running: M (priority 60)
+```
+
+**Step 4: M releases Lock A**
+```
+M calls lock_release(Lock A):
+- Remove donations for Lock A from M->donations  
+- M->donations becomes empty []
+- M's effective priority = max(30, none) = 30
+- H gets Lock A, H->donating_to = NULL
+- H's effective priority = 60 (base priority)
+
+Running: H (priority 60)
+```
+
+**Verification**: Our algorithm correctly handles:
+1. ✅ **Nested donation creation**: H's priority propagates H→M→L
+2. ✅ **Selective removal**: Only donations for the specific released lock are removed
+3. ✅ **Automatic chain updates**: No manual chain updates needed - computed effective priority handles it
+4. ✅ **Correct priorities**: Each thread runs at appropriate effective priority
+5. ✅ **Clean unwinding**: Donations are removed in correct order as locks release
+
 ### Synchronization Primitive Modifications
 
-**Semaphores**: The waiters list is maintained as a priority queue. In `sema_up()`, we wake the highest priority waiter instead of the first waiter. In `sema_down()`, we insert the current thread in priority order.
+**Semaphores**: The waiters list is maintained as a priority queue using the existing `thread->elem` field. In `sema_up()`, we wake the highest priority waiter instead of the first waiter. In `sema_down()`, we insert the current thread in priority order using `list_insert_ordered()`.
 
-**Condition variables**: Similar to semaphores, we maintain condition waiters in priority order and signal the highest priority waiter first.
+**Condition variables**: The waiters list contains threads directly (not wrapper structures) sorted by effective priority using `thread->elem`. Since a thread can only be in one waiting state at a time (ready, blocked on semaphore, or blocked on condition), we can reuse the same list element field. In `cond_signal()`, we wake the highest priority waiter, and in `cond_wait()`, we insert threads in priority order.
 
 **Lock priority inheritance**: When acquiring a lock, if blocked, the current thread donates its priority to the lock holder and potentially through a chain of donations.
 
@@ -253,6 +303,8 @@ The design allows high concurrency by using fine-grained interrupt disabling onl
 
 4. **Minimal code changes**: Leverages existing scheduling framework, only modifying comparison functions and adding donation tracking.
 
+5. **Memory efficiency**: Reuses existing `thread->elem` field for all waiting lists instead of creating wrapper structures, reducing memory overhead and complexity.
+
 ### Alternative Approaches Considered
 
 **Priority queues with heaps**: Would provide O(log n) insertion but O(1) max element access. Rejected due to implementation complexity and marginal benefit given typical thread counts.
@@ -260,6 +312,8 @@ The design allows high concurrency by using fine-grained interrupt disabling onl
 **Single effective priority field**: Initially considered storing computed effective priority, but this creates synchronization issues and potential staleness. The computed approach is cleaner.
 
 **Global donation table**: Could track all donations in a system-wide structure, but per-thread lists provide better locality and simpler cleanup.
+
+**Separate condition waiter structures**: Initially considered creating wrapper structures for condition variable waiters, but reusing `thread->elem` is more efficient since threads can only be in one waiting state at a time.
 
 ### Potential Limitations
 
