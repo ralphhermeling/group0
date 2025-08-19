@@ -75,9 +75,8 @@ The `wake_time_less()` function compares wake_time fields to maintain sleep_list
 
 ### Thread Creation
 
-In `init_thread()`, initialize new fields:
+In `init_thread()`, initialize new field:
 - Set `wake_time = 0` (thread not sleeping)
-- Initialize `sleep_elem` using `list_elem_init()`
 
 ## Synchronization
 
