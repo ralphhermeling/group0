@@ -98,6 +98,7 @@ scheduler_func* scheduler_jump_table[8] = {thread_schedule_fifo,     thread_sche
 
 static bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux);
 static void thread_revoke_donations(struct thread* t);
+static void thread_update_donations(struct thread* t);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -351,6 +352,38 @@ static void thread_revoke_donations(struct thread* t) {
   thread_revoke_donations_recurse(t, t->donating_to);
 }
 
+static void thread_update_donations_recurse(struct thread* donor, struct thread* donee) {
+  if (donee == NULL) {
+    return;
+  }
+
+  struct donation* found_donation = NULL;
+  struct list_elem* e;
+  for (e = list_begin(&donee->donations); e != list_end(&donee->donations); e = list_next(e)) {
+    struct donation* d = list_entry(e, struct donation, elem);
+    if (d->donor == donor) {
+      found_donation = d;
+      break;
+    }
+  }
+
+  if (found_donation == NULL) {
+    return;
+  }
+  found_donation->donated_priority = a_thread_get_priority(donor);
+
+  thread_update_donations_recurse(donee, donee->donating_to);
+}
+
+/* Updates donations this thread has made to others with new effective priority. Donations are updated down
+  the donation chain */
+static void thread_update_donations(struct thread* t) {
+  if (t->donating_to == NULL) {
+    return;
+  }
+  thread_update_donations_recurse(t, t->donating_to);
+}
+
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
 void thread_exit(void) {
@@ -408,7 +441,12 @@ void thread_set_priority(int new_priority) {
   enum intr_level old_level = intr_disable();
 
   struct thread* t = thread_current();
+  int old_effective_priority = thread_get_priority();
   t->priority = new_priority;
+
+  if (old_effective_priority != a_thread_get_priority(t)) {
+    thread_update_donations(t);
+  }
   list_sort(&priority_ready_list, thread_priority_less, NULL);
 
   bool should_yield = false;
