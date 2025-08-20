@@ -2,6 +2,7 @@
 #include <debug.h>
 #include <stddef.h>
 #include <random.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include "list.h"
@@ -96,6 +97,7 @@ scheduler_func* scheduler_jump_table[8] = {thread_schedule_fifo,     thread_sche
                                            thread_schedule_reserved, thread_schedule_reserved};
 
 static bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux);
+static void thread_revoke_donations(struct thread* t);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -262,8 +264,8 @@ static void thread_enqueue(struct thread* t) {
    This is an error if T is not blocked.  (Use thread_yield() to
    make the running thread ready.)
 
-   This function does not preempt the running thread.  This can
-   be important: if the caller had disabled interrupts itself,
+   This function does not preempt the running thread if it still has the highest priority.
+   This can be important: if the caller had disabled interrupts itself,
    it may expect that it can atomically unblock a thread and
    update other data. */
 void thread_unblock(struct thread* t) {
@@ -309,6 +311,46 @@ struct thread* thread_current(void) {
 /* Returns the running thread's tid. */
 tid_t thread_tid(void) { return thread_current()->tid; }
 
+static void thread_revoke_donations_recurse(struct thread* donor, struct thread* donee) {
+  if (donee == NULL) {
+    return;
+  }
+
+  if (list_empty(&donee->donations)) {
+    return;
+  }
+
+  if (donee->donating_to == NULL) {
+    return;
+  }
+
+  donor->donating_to = NULL;
+
+  struct list_elem* e = list_begin(&donee->donations);
+
+  while (e != NULL) {
+    struct donation* d = list_entry(e, struct donation, elem);
+    struct list_elem* next = list_next(e);
+    if (d->donor == donor) {
+      free(d);
+      list_remove(e);
+    }
+    e = next;
+  }
+
+  thread_revoke_donations_recurse(donee, donee->donating_to);
+}
+
+/* Revokes donations this thread has received and made to others. Donations are revoked down
+  the donation chain */
+static void thread_revoke_donations(struct thread* t) {
+  while (!list_empty(&t->donations)) {
+    struct donation* d = list_entry(list_pop_front(&t->donations), struct donation, elem);
+    free(d);
+  }
+  thread_revoke_donations_recurse(t, t->donating_to);
+}
+
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
 void thread_exit(void) {
@@ -319,7 +361,15 @@ void thread_exit(void) {
      when it calls thread_switch_tail(). */
   intr_disable();
   list_remove(&thread_current()->allelem);
-  thread_current()->status = THREAD_DYING;
+  struct thread* t = thread_current();
+  t->status = THREAD_DYING;
+
+  /* Remove all donations this thread made to other threads directly and recursively.
+     Clear this thread's donation list.
+     Sort the priority list after updating donations. */
+  thread_revoke_donations(t);
+  list_sort(&priority_ready_list, thread_priority_less, NULL);
+
   schedule();
   NOT_REACHED();
 }
