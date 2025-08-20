@@ -275,6 +275,14 @@ void thread_unblock(struct thread* t) {
   ASSERT(t->status == THREAD_BLOCKED);
   thread_enqueue(t);
   t->status = THREAD_READY;
+
+  if (active_sched_policy == SCHED_PRIO &&
+      a_thread_get_priority(t) > a_thread_get_priority(thread_current())) {
+    intr_set_level(old_level);
+    thread_yield();
+    return;
+  }
+
   intr_set_level(old_level);
 }
 
@@ -360,6 +368,7 @@ void thread_set_priority(int new_priority) {
       should_yield = true;
     }
   }
+
   intr_set_level(old_level);
   if (should_yield) {
     thread_yield();
