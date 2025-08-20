@@ -357,6 +357,10 @@ static void thread_update_donations_recurse(struct thread* donor, struct thread*
     return;
   }
 
+  if (list_empty(&donee->donations)) {
+    return;
+  }
+
   struct donation* found_donation = NULL;
   struct list_elem* e;
   for (e = list_begin(&donee->donations); e != list_end(&donee->donations); e = list_next(e)) {
@@ -400,8 +404,10 @@ void thread_exit(void) {
   /* Remove all donations this thread made to other threads directly and recursively.
      Clear this thread's donation list.
      Sort the priority list after updating donations. */
-  thread_revoke_donations(t);
-  list_sort(&priority_ready_list, thread_priority_less, NULL);
+  if (active_sched_policy == SCHED_PRIO) {
+    thread_revoke_donations(t);
+    list_sort(&priority_ready_list, thread_priority_less, NULL);
+  }
 
   schedule();
   NOT_REACHED();
