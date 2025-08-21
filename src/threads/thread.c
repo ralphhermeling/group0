@@ -350,6 +350,17 @@ static void thread_revoke_donations(struct thread* t) {
   thread_revoke_donations_recurse(t, t->donating_to);
 }
 
+struct donation* find_donation_by_donor_and_donee(struct thread* donor, struct thread* donee) {
+  struct list_elem* e;
+  for (e = list_begin(&donee->donations); e != list_end(&donee->donations); e = list_next(e)) {
+    struct donation* d = list_entry(e, struct donation, elem);
+    if (d->donor == donor) {
+      return d;
+    }
+  }
+  return NULL;
+}
+
 static void thread_update_donations_recurse(struct thread* donor, struct thread* donee) {
   if (donee == NULL) {
     return;
@@ -359,16 +370,7 @@ static void thread_update_donations_recurse(struct thread* donor, struct thread*
     return;
   }
 
-  struct donation* found_donation = NULL;
-  struct list_elem* e;
-  for (e = list_begin(&donee->donations); e != list_end(&donee->donations); e = list_next(e)) {
-    struct donation* d = list_entry(e, struct donation, elem);
-    if (d->donor == donor) {
-      found_donation = d;
-      break;
-    }
-  }
-
+  struct donation* found_donation = find_donation_by_donor_and_donee(donor, donee);
   if (found_donation == NULL) {
     return;
   }
@@ -440,6 +442,16 @@ void thread_foreach(thread_action_func* func, void* aux) {
   }
 }
 
+bool thread_has_highest_priority(void) {
+  if (!list_empty(&priority_ready_list)) {
+    struct thread* highest_ready = list_entry(list_back(&priority_ready_list), struct thread, elem);
+    if (thread_get_priority_of(highest_ready) > thread_get_priority_of(thread_current())) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void thread_set_priority(int new_priority) {
   enum intr_level old_level = intr_disable();
@@ -453,14 +465,7 @@ void thread_set_priority(int new_priority) {
   }
   list_sort(&priority_ready_list, thread_priority_less, NULL);
 
-  bool should_yield = false;
-  if (!list_empty(&priority_ready_list)) {
-    struct thread* highest_ready = list_entry(list_back(&priority_ready_list), struct thread, elem);
-    if (thread_get_priority_of(highest_ready) > thread_get_priority_of(t)) {
-      should_yield = true;
-    }
-  }
-
+  bool should_yield = !thread_has_highest_priority();
   intr_set_level(old_level);
   if (should_yield) {
     thread_yield();
@@ -586,7 +591,6 @@ static void init_thread(struct thread* t, const char* name, int priority) {
   t->magic = THREAD_MAGIC;
   t->donating_to = NULL;
   list_init(&t->donations);
-  list_init(&t->held_locks);
 
   old_level = intr_disable();
   list_push_back(&all_list, &t->allelem);

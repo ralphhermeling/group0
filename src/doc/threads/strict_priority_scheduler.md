@@ -11,7 +11,6 @@ struct thread {
     int priority;                     // Base priority set by thread_set_priority
     struct list donations;            // List of donations sorted by priority (highest first)
     struct thread *donating_to;       // Thread this thread is donating to (for nested donation)
-    struct list held_locks;           // List of locks this thread currently holds
 };
 
 // Donation structure to track priority donations
@@ -26,7 +25,6 @@ struct donation {
 struct lock {
     struct thread *holder;            // Thread that holds lock
     struct semaphore semaphore;       // Semaphore for blocking/unblocking
-    struct list_elem elem;            // For held_locks list
 };
 ```
 
@@ -120,9 +118,6 @@ void lock_acquire(struct lock *lock) {
     // Acquired the lock
     lock->holder = current;
     current->donating_to = NULL; // No longer donating
-    
-    // Add lock to held_locks list
-    list_push_back(&current->held_locks, &lock->elem);
 }
 
 void lock_release(struct lock *lock) {
@@ -130,9 +125,6 @@ void lock_release(struct lock *lock) {
     
     // Disable interrupts for atomic operations
     enum intr_level old_level = intr_disable();
-    
-    // Remove this lock from held_locks list
-    list_remove(&lock->elem);
     
     // Remove all donations associated with this specific lock
     struct list_elem *e = list_begin(&current->donations);

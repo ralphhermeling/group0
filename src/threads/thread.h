@@ -94,7 +94,6 @@ struct thread {
   struct list_elem elem;      /* List element. */
   struct list donations;      /* List of donations sorted by priority (highest first) */
   struct thread* donating_to; /* Thread this thread is donating to (for nested donation) */
-  struct list held_locks;     /* List of locks this thread currently holds */
 
   int64_t wake_time;          /* Time when thread should wake up from sleep */
   struct list_elem sleepelem; /* List element for sleep_list */
@@ -160,10 +159,13 @@ int thread_get_priority(void);
 int thread_get_priority_of(struct thread* t);
 void thread_set_priority(int);
 bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux);
+bool thread_has_highest_priority(void);
 
 int thread_get_nice(void);
 void thread_set_nice(int);
 int thread_get_recent_cpu(void);
 int thread_get_load_avg(void);
+
+struct donation* find_donation_by_donor_and_donee(struct thread* donor, struct thread* donee);
 
 #endif /* threads/thread.h */
