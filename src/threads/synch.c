@@ -247,6 +247,24 @@ bool lock_try_acquire(struct lock* lock) {
   return success;
 }
 
+static void thread_revoke_donations_for_lock(struct thread* thread, struct lock* lock) {
+  struct list_elem* e = list_begin(&thread->donations);
+  while (e != NULL) {
+    struct list_elem* next = list_next(e);
+
+    struct donation* d = list_entry(e, struct donation, elem);
+    if (d->lock == lock) {
+      list_remove(e);
+      free(d);
+    }
+    e = next;
+  }
+
+  if (!list_empty(&thread->donations)) {
+    thread_sort_donations(thread);
+  }
+}
+
 /* Releases LOCK, which must be owned by the current thread.
 
    An interrupt handler cannot acquire a lock, so it does not
@@ -264,6 +282,9 @@ void lock_release(struct lock* lock) {
     // Remove donation chain made by thread associated with this specific lock
     thread_revoke_made_donations(current);
 
+    // Remove donation related to lock
+    thread_revoke_donations_for_lock(current, lock);
+
     // Clear lock holder
     lock->holder = NULL;
 
@@ -277,6 +298,8 @@ void lock_release(struct lock* lock) {
 
     // Yield if current thread no longer has highest effective priority
     bool should_yield = !thread_has_highest_priority();
+
+    intr_set_level(old_level);
 
     if (should_yield) {
       thread_yield();
