@@ -249,7 +249,7 @@ bool lock_try_acquire(struct lock* lock) {
 
 static void thread_revoke_donations_for_lock(struct thread* thread, struct lock* lock) {
   struct list_elem* e = list_begin(&thread->donations);
-  while (e != NULL) {
+  while (e != list_end(&thread->donations)) {
     struct list_elem* next = list_next(e);
 
     struct donation* d = list_entry(e, struct donation, elem);
