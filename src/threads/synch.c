@@ -26,9 +26,9 @@
    MODIFICATIONS.
 */
 
+#include "threads/malloc.h"
 #include "threads/synch.h"
 #include <stdio.h>
-#include <string.h>
 #include "list.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
@@ -171,13 +171,6 @@ void lock_init(struct lock* lock) {
   sema_init(&lock->semaphore, 1);
 }
 
-static bool donation_priority_less(const struct list_elem* a, const struct list_elem* b,
-                                   UNUSED void* aux) {
-  struct donation* d_a = list_entry(a, struct donation, elem);
-  struct donation* d_b = list_entry(b, struct donation, elem);
-  return d_a->donated_priority < d_b->donated_priority;
-}
-
 /* Acquires LOCK, sleeping until it becomes available if
    necessary.  The lock must not already be held by the current
    thread.
@@ -199,13 +192,13 @@ void lock_acquire(struct lock* lock) {
     // If lock is held, donate priority and set up donation chain
     if (lock->holder != NULL && current_thread->donating_to == NULL) {
       // Create donation on stack
-      struct donation new_donation;
-      new_donation.lock = lock;
-      new_donation.donated_priority = thread_get_priority();
-      new_donation.donor = current_thread;
+      struct donation* new_donation = malloc(sizeof(struct donation));
+      new_donation->lock = lock;
+      new_donation->donated_priority = thread_get_priority();
+      new_donation->donor = current_thread;
 
       // Add donation to holder's sorted donations list
-      list_insert_ordered(&lock->holder->donations, &new_donation.elem, donation_priority_less,
+      list_insert_ordered(&lock->holder->donations, &new_donation->elem, donation_priority_less,
                           NULL);
 
       // Set up chain for nested donation
@@ -218,11 +211,11 @@ void lock_acquire(struct lock* lock) {
 
         // Find existing donation from recipient to next
         struct donation* existing = find_donation_by_donor_and_donee(recipient, next);
-        if (existing && existing->donated_priority < new_donation.donated_priority) {
+        if (existing && existing->donated_priority < new_donation->donated_priority) {
           // Update existing donation with higher priority
-          existing->donated_priority = new_donation.donated_priority;
+          existing->donated_priority = new_donation->donated_priority;
           // Re-sort donations list
-          list_sort(&next->donations, donation_priority_less, NULL);
+          thread_sort_donations(next);
         }
         recipient = next;
       }
@@ -269,19 +262,13 @@ void lock_release(struct lock* lock) {
     enum intr_level old_level = intr_disable();
 
     // Remove all donations associated with this specific lock
-    struct list_elem* e = list_begin(&current->donations);
-    while (e != list_end(&current->donations)) {
-      struct donation* d = list_entry(e, struct donation, elem);
-      struct list_elem* next = list_next(e);
-
-      if (d->lock == lock) {
-        list_remove(e);
-      }
-      e = next;
-    }
+    thread_revoke_donations(current);
 
     // Clear lock holder
     lock->holder = NULL;
+
+    // Sort priority list after deleting donations use latest effective priority
+    sort_priority_ready_list();
 
     intr_set_level(old_level);
 

@@ -1,8 +1,8 @@
+#include "threads/malloc.h"
 #include "threads/thread.h"
 #include <debug.h>
 #include <stddef.h>
 #include <random.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include "list.h"
@@ -96,7 +96,6 @@ scheduler_func* scheduler_jump_table[8] = {thread_schedule_fifo,     thread_sche
                                            thread_schedule_reserved, thread_schedule_reserved,
                                            thread_schedule_reserved, thread_schedule_reserved};
 
-static void thread_revoke_donations(struct thread* t);
 static void thread_update_donations(struct thread* t);
 
 /* Initializes the threading system by transforming the code
@@ -243,6 +242,8 @@ bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, 
   return thread_get_priority_of(thread_a) < thread_get_priority_of(thread_b);
 }
 
+void sort_priority_ready_list(void) { list_sort(&priority_ready_list, thread_priority_less, NULL); }
+
 /* Places a thread on the ready structure appropriate for the
    current active scheduling policy.
    
@@ -342,12 +343,23 @@ static void thread_revoke_donations_recurse(struct thread* donor, struct thread*
 
 /* Revokes donations this thread has received and made to others. Donations are revoked down
   the donation chain */
-static void thread_revoke_donations(struct thread* t) {
+void thread_revoke_donations(struct thread* t) {
   while (!list_empty(&t->donations)) {
     struct donation* d = list_entry(list_pop_front(&t->donations), struct donation, elem);
     free(d);
   }
   thread_revoke_donations_recurse(t, t->donating_to);
+}
+
+bool donation_priority_less(const struct list_elem* a, const struct list_elem* b,
+                            UNUSED void* aux) {
+  struct donation* d_a = list_entry(a, struct donation, elem);
+  struct donation* d_b = list_entry(b, struct donation, elem);
+  return d_a->donated_priority < d_b->donated_priority;
+}
+
+void thread_sort_donations(struct thread* t) {
+  list_sort(&t->donations, donation_priority_less, NULL);
 }
 
 struct donation* find_donation_by_donor_and_donee(struct thread* donor, struct thread* donee) {
@@ -375,6 +387,7 @@ static void thread_update_donations_recurse(struct thread* donor, struct thread*
     return;
   }
   found_donation->donated_priority = thread_get_priority_of(donor);
+  thread_sort_donations(donee);
 
   thread_update_donations_recurse(donee, donee->donating_to);
 }
