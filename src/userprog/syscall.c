@@ -7,7 +7,6 @@
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "list.h"
-#include <stdlib.h>
 #include "process.h"
 #include "string.h"
 #include "threads/interrupt.h"
