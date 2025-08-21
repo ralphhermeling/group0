@@ -169,6 +169,7 @@ int thread_get_load_avg(void);
 bool donation_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux);
 struct donation* find_donation_by_donor_and_donee(struct thread* donor, struct thread* donee);
 void thread_sort_donations(struct thread* t);
-void thread_revoke_donations(struct thread* t);
+void thread_revoke_made_donations(struct thread* t);
+void thread_revoke_received_donations(struct thread* t);
 void sort_priority_ready_list(void);
 #endif /* threads/thread.h */

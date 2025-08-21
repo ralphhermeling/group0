@@ -311,7 +311,8 @@ struct thread* thread_current(void) {
 /* Returns the running thread's tid. */
 tid_t thread_tid(void) { return thread_current()->tid; }
 
-static void thread_revoke_donations_recurse(struct thread* donor, struct thread* donee) {
+/* Recursively revoke donations it has made */
+static void thread_revoke_made_donations_recurse(struct thread* donor, struct thread* donee) {
   if (donee == NULL) {
     return;
   }
@@ -338,17 +339,26 @@ static void thread_revoke_donations_recurse(struct thread* donor, struct thread*
     e = next;
   }
 
-  thread_revoke_donations_recurse(donee, donee->donating_to);
+  thread_revoke_made_donations_recurse(donee, donee->donating_to);
 }
 
-/* Revokes donations this thread has received and made to others. Donations are revoked down
-  the donation chain */
-void thread_revoke_donations(struct thread* t) {
+/* Revoke complete donation chain it has made */
+void thread_revoke_made_donations(struct thread* t) {
+  thread_revoke_made_donations_recurse(t, t->donating_to);
+}
+
+void thread_revoke_received_donations(struct thread* t) {
   while (!list_empty(&t->donations)) {
     struct donation* d = list_entry(list_pop_front(&t->donations), struct donation, elem);
     free(d);
   }
-  thread_revoke_donations_recurse(t, t->donating_to);
+}
+
+/* Revokes donations this thread has received and made to others. Donations are revoked down
+  the donation chain */
+static void thread_revoke_donations(struct thread* t) {
+  thread_revoke_received_donations(t);
+  thread_revoke_made_donations(t);
 }
 
 bool donation_priority_less(const struct list_elem* a, const struct list_elem* b,

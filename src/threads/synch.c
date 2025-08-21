@@ -261,8 +261,8 @@ void lock_release(struct lock* lock) {
     // Disable interrupts for atomic operations
     enum intr_level old_level = intr_disable();
 
-    // Remove all donations associated with this specific lock
-    thread_revoke_donations(current);
+    // Remove donation chain made by thread associated with this specific lock
+    thread_revoke_made_donations(current);
 
     // Clear lock holder
     lock->holder = NULL;
