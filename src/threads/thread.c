@@ -96,7 +96,6 @@ scheduler_func* scheduler_jump_table[8] = {thread_schedule_fifo,     thread_sche
                                            thread_schedule_reserved, thread_schedule_reserved,
                                            thread_schedule_reserved, thread_schedule_reserved};
 
-static bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux);
 static void thread_revoke_donations(struct thread* t);
 static void thread_update_donations(struct thread* t);
 
@@ -237,8 +236,7 @@ void thread_block(void) {
   schedule();
 }
 
-static bool thread_priority_less(const struct list_elem* a, const struct list_elem* b,
-                                 UNUSED void* aux) {
+bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, UNUSED void* aux) {
   struct thread* thread_a = list_entry(a, struct thread, elem);
   struct thread* thread_b = list_entry(b, struct thread, elem);
 
