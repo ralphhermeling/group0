@@ -157,14 +157,13 @@ typedef void thread_action_func(struct thread* t, void* aux);
 void thread_foreach(thread_action_func*, void*);
 
 int thread_get_priority(void);
-int a_thread_get_priority(struct thread* t);
+int thread_get_priority_of(struct thread* t);
 void thread_set_priority(int);
+bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux);
 
 int thread_get_nice(void);
 void thread_set_nice(int);
 int thread_get_recent_cpu(void);
 int thread_get_load_avg(void);
-
-bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, void* aux);
 
 #endif /* threads/thread.h */

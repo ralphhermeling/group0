@@ -29,6 +29,7 @@
 #include "threads/synch.h"
 #include <stdio.h>
 #include <string.h>
+#include "list.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
@@ -289,7 +290,15 @@ void rw_lock_release(struct rw_lock* rw_lock, bool reader) {
 struct semaphore_elem {
   struct list_elem elem;      /* List element. */
   struct semaphore semaphore; /* This semaphore. */
+  struct thread* thread;      /* Thread waiting on this semaphore (for priority ordering). */
 };
+
+static bool semaphore_elem_thread_priority_less(const struct list_elem* a,
+                                                const struct list_elem* b, UNUSED void* aux) {
+  struct semaphore_elem* sema_elem_a = list_entry(a, struct semaphore_elem, elem);
+  struct semaphore_elem* sema_elem_b = list_entry(b, struct semaphore_elem, elem);
+  return thread_get_priority_of(sema_elem_a->thread) < thread_get_priority_of(sema_elem_b->thread);
+}
 
 /* Initializes condition variable COND.  A condition variable
    allows one piece of code to signal a condition and cooperating
@@ -328,8 +337,21 @@ void cond_wait(struct condition* cond, struct lock* lock) {
   ASSERT(!intr_context());
   ASSERT(lock_held_by_current_thread(lock));
 
+  /* Condition variables use a unique design: each waiting thread gets its own
+     personal semaphore (initialized to 0). When cond_wait() is called, a 
+     semaphore_elem with a new semaphore is created as a local stack variable
+     and added to the waiters list. The thread then blocks on its personal
+     semaphore via sema_down(). When cond_signal() is called, it picks one
+     semaphore from the waiters list and calls sema_up() on it, unblocking
+     exactly one thread. This ensures each semaphore in the waiters list
+     has exactly one thread waiting on it. */
   sema_init(&waiter.semaphore, 0);
-  list_push_back(&cond->waiters, &waiter.elem);
+  waiter.thread = thread_current();
+  if (active_sched_policy == SCHED_PRIO) {
+    list_insert_ordered(&cond->waiters, &waiter.elem, semaphore_elem_thread_priority_less, NULL);
+  } else {
+    list_push_back(&cond->waiters, &waiter.elem);
+  }
   lock_release(lock);
   sema_down(&waiter.semaphore);
   lock_acquire(lock);
@@ -348,8 +370,13 @@ void cond_signal(struct condition* cond, struct lock* lock UNUSED) {
   ASSERT(!intr_context());
   ASSERT(lock_held_by_current_thread(lock));
 
-  if (!list_empty(&cond->waiters))
-    sema_up(&list_entry(list_pop_front(&cond->waiters), struct semaphore_elem, elem)->semaphore);
+  if (!list_empty(&cond->waiters)) {
+    if (active_sched_policy == SCHED_PRIO) {
+      sema_up(&list_entry(list_pop_back(&cond->waiters), struct semaphore_elem, elem)->semaphore);
+    } else {
+      sema_up(&list_entry(list_pop_front(&cond->waiters), struct semaphore_elem, elem)->semaphore);
+    }
+  }
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by

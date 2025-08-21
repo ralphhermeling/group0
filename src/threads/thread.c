@@ -240,7 +240,7 @@ bool thread_priority_less(const struct list_elem* a, const struct list_elem* b, 
   struct thread* thread_a = list_entry(a, struct thread, elem);
   struct thread* thread_b = list_entry(b, struct thread, elem);
 
-  return a_thread_get_priority(thread_a) < a_thread_get_priority(thread_b);
+  return thread_get_priority_of(thread_a) < thread_get_priority_of(thread_b);
 }
 
 /* Places a thread on the ready structure appropriate for the
@@ -278,7 +278,7 @@ void thread_unblock(struct thread* t) {
   t->status = THREAD_READY;
 
   if (active_sched_policy == SCHED_PRIO &&
-      a_thread_get_priority(t) > a_thread_get_priority(thread_current())) {
+      thread_get_priority_of(t) > thread_get_priority_of(thread_current())) {
     intr_set_level(old_level);
     thread_yield();
     return;
@@ -372,7 +372,7 @@ static void thread_update_donations_recurse(struct thread* donor, struct thread*
   if (found_donation == NULL) {
     return;
   }
-  found_donation->donated_priority = a_thread_get_priority(donor);
+  found_donation->donated_priority = thread_get_priority_of(donor);
 
   thread_update_donations_recurse(donee, donee->donating_to);
 }
@@ -448,7 +448,7 @@ void thread_set_priority(int new_priority) {
   int old_effective_priority = thread_get_priority();
   t->priority = new_priority;
 
-  if (old_effective_priority != a_thread_get_priority(t)) {
+  if (old_effective_priority != thread_get_priority_of(t)) {
     thread_update_donations(t);
   }
   list_sort(&priority_ready_list, thread_priority_less, NULL);
@@ -456,7 +456,7 @@ void thread_set_priority(int new_priority) {
   bool should_yield = false;
   if (!list_empty(&priority_ready_list)) {
     struct thread* highest_ready = list_entry(list_back(&priority_ready_list), struct thread, elem);
-    if (a_thread_get_priority(highest_ready) > a_thread_get_priority(t)) {
+    if (thread_get_priority_of(highest_ready) > thread_get_priority_of(t)) {
       should_yield = true;
     }
   }
@@ -467,11 +467,11 @@ void thread_set_priority(int new_priority) {
   }
 }
 
-/* Returns the current thread's priority. */
-int thread_get_priority(void) { return a_thread_get_priority(thread_current()); }
+/* Returns the current thread's effective priority. */
+int thread_get_priority(void) { return thread_get_priority_of(thread_current()); }
 
 /* Returns the thread's effective priority. */
-int a_thread_get_priority(struct thread* t) {
+int thread_get_priority_of(struct thread* t) {
   int base_priority = t->priority;
   if (list_empty(&t->donations)) {
     return base_priority;
