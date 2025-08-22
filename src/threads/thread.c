@@ -215,6 +215,8 @@ tid_t thread_create(const char* name, int priority, thread_func* function, void*
   sf->eip = switch_entry;
   sf->ebp = 0;
 
+  // printf("Adding thread: %s to run queue\n", name);
+
   /* Add to run queue. */
   thread_unblock(t);
 
@@ -277,11 +279,10 @@ void thread_unblock(struct thread* t) {
   ASSERT(t->status == THREAD_BLOCKED);
   thread_enqueue(t);
   t->status = THREAD_READY;
-
   if (active_sched_policy == SCHED_PRIO &&
       thread_get_priority_of(t) > thread_get_priority_of(thread_current())) {
     intr_set_level(old_level);
-    thread_yield();
+    // thread_yield();
     return;
   }
 
@@ -420,13 +421,15 @@ void thread_exit(void) {
      and schedule another process.  That process will destroy us
      when it calls thread_switch_tail(). */
   intr_disable();
+  // printf("Exiting thread: %s\n", thread_current()->name);
   list_remove(&thread_current()->allelem);
   struct thread* t = thread_current();
   t->status = THREAD_DYING;
 
   /* Remove all donations this thread made to other threads directly and recursively.
      Clear this thread's donation list.
-     Sort the priority list after updating donations. */
+     Sort the priority list after updating donations. 
+  */
   if (active_sched_policy == SCHED_PRIO) {
     thread_revoke_donations(t);
     list_sort(&priority_ready_list, thread_priority_less, NULL);
@@ -445,8 +448,9 @@ void thread_yield(void) {
   ASSERT(!intr_context());
 
   old_level = intr_disable();
-  if (cur != idle_thread)
+  if (cur != idle_thread) {
     thread_enqueue(cur);
+  }
   cur->status = THREAD_READY;
   schedule();
   intr_set_level(old_level);
@@ -500,6 +504,10 @@ int thread_get_priority(void) { return thread_get_priority_of(thread_current());
 
 /* Returns the thread's effective priority. */
 int thread_get_priority_of(struct thread* t) {
+  /* Temporarily disable donations - just return base priority */
+  return t->priority;
+
+  /* Original donation logic:
   int base_priority = t->priority;
   if (list_empty(&t->donations)) {
     return base_priority;
@@ -512,6 +520,7 @@ int thread_get_priority_of(struct thread* t) {
   } else {
     return base_priority;
   }
+  */
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -642,7 +651,8 @@ static struct thread* thread_schedule_fifo(void) {
 /* Strict priority scheduler */
 static struct thread* thread_schedule_prio(void) {
   if (!list_empty(&priority_ready_list)) {
-    return list_entry(list_pop_back(&priority_ready_list), struct thread, elem);
+    struct thread* t = list_entry(list_pop_back(&priority_ready_list), struct thread, elem);
+    return t;
   } else {
     return idle_thread;
   }
@@ -696,6 +706,9 @@ void thread_switch_tail(struct thread* prev) {
 
   /* Mark us as running. */
   cur->status = THREAD_RUNNING;
+
+  // printf("Switched from prev: %s to current thread: %s!\n", prev->name, cur->name);
+  // printf("Switched to current thread: %s!\n", cur->name);
 
   /* Start new time slice. */
   thread_ticks = 0;

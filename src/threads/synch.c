@@ -185,6 +185,7 @@ void lock_acquire(struct lock* lock) {
   ASSERT(!lock_held_by_current_thread(lock));
 
   struct thread* current_thread = thread_current();
+  /* Temporarily disable priority donation
   if (active_sched_policy == SCHED_PRIO) {
     // Disable interrupts for atomic donation operations
     enum intr_level old_level = intr_disable();
@@ -223,6 +224,7 @@ void lock_acquire(struct lock* lock) {
 
     intr_set_level(old_level);
   }
+  */
 
   sema_down(&lock->semaphore);
   lock->holder = current_thread;
@@ -247,7 +249,8 @@ bool lock_try_acquire(struct lock* lock) {
   return success;
 }
 
-static void thread_revoke_donations_for_lock(struct thread* thread, struct lock* lock) {
+static void thread_revoke_donations_for_lock(struct thread* thread UNUSED,
+                                             struct lock* lock UNUSED) {
   struct list_elem* e = list_begin(&thread->donations);
   while (e != list_end(&thread->donations)) {
     struct list_elem* next = list_next(e);
@@ -274,6 +277,7 @@ void lock_release(struct lock* lock) {
   ASSERT(lock != NULL);
   ASSERT(lock_held_by_current_thread(lock));
 
+  /* Temporarily disable priority donation in lock_release
   if (active_sched_policy == SCHED_PRIO) {
     struct thread* current = thread_current();
     // Disable interrupts for atomic operations
@@ -291,8 +295,6 @@ void lock_release(struct lock* lock) {
     // Sort priority list after deleting donations use latest effective priority
     sort_priority_ready_list();
 
-    intr_set_level(old_level);
-
     // Wake up highest priority waiter
     sema_up(&lock->semaphore);
 
@@ -306,6 +308,7 @@ void lock_release(struct lock* lock) {
     }
     return;
   }
+  */
 
   lock->holder = NULL;
   sema_up(&lock->semaphore);
