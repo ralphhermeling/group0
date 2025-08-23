@@ -119,8 +119,12 @@ void sema_up(struct semaphore* sema) {
   sema->value++;
   intr_set_level(old_level);
 
-  if (!intr_context() && max_waiter_prio > thread_get_priority_of(thread_current())) {
-    thread_yield();
+  if (max_waiter_prio > thread_get_priority_of(thread_current())) {
+    if (intr_context()) {
+      intr_yield_on_return();
+    } else {
+      thread_yield();
+    }
   }
 }
 
@@ -191,22 +195,19 @@ void lock_acquire(struct lock* lock) {
   ASSERT(!lock_held_by_current_thread(lock));
 
   struct thread* current_thread = thread_current();
-  /* Temporarily disable priority donation
   if (active_sched_policy == SCHED_PRIO) {
     // Disable interrupts for atomic donation operations
     enum intr_level old_level = intr_disable();
 
     // If lock is held, donate priority and set up donation chain
     if (lock->holder != NULL && current_thread->donating_to == NULL) {
-      // Create donation on stack
       struct donation* new_donation = malloc(sizeof(struct donation));
       new_donation->lock = lock;
       new_donation->donated_priority = thread_get_priority();
       new_donation->donor = current_thread;
 
       // Add donation to holder's sorted donations list
-      list_insert_ordered(&lock->holder->donations, &new_donation->elem, donation_priority_less,
-                          NULL);
+      list_push_back(&lock->holder->donations, &new_donation->elem);
 
       // Set up chain for nested donation
       current_thread->donating_to = lock->holder;
@@ -216,13 +217,15 @@ void lock_acquire(struct lock* lock) {
       while (recipient != NULL) {
         struct thread* next = recipient->donating_to;
 
+        if (!next) {
+          break;
+        }
+
         // Find existing donation from recipient to next
         struct donation* existing = find_donation_by_donor_and_donee(recipient, next);
         if (existing && existing->donated_priority < new_donation->donated_priority) {
           // Update existing donation with higher priority
           existing->donated_priority = new_donation->donated_priority;
-          // Re-sort donations list
-          thread_sort_donations(next);
         }
         recipient = next;
       }
@@ -230,7 +233,6 @@ void lock_acquire(struct lock* lock) {
 
     intr_set_level(old_level);
   }
-  */
 
   sema_down(&lock->semaphore);
   lock->holder = current_thread;
@@ -255,8 +257,7 @@ bool lock_try_acquire(struct lock* lock) {
   return success;
 }
 
-static void thread_revoke_donations_for_lock(struct thread* thread UNUSED,
-                                             struct lock* lock UNUSED) {
+static void thread_revoke_donations_for_lock(struct thread* thread, struct lock* lock) {
   struct list_elem* e = list_begin(&thread->donations);
   while (e != list_end(&thread->donations)) {
     struct list_elem* next = list_next(e);
@@ -267,10 +268,6 @@ static void thread_revoke_donations_for_lock(struct thread* thread UNUSED,
       free(d);
     }
     e = next;
-  }
-
-  if (!list_empty(&thread->donations)) {
-    thread_sort_donations(thread);
   }
 }
 
@@ -283,7 +280,10 @@ void lock_release(struct lock* lock) {
   ASSERT(lock != NULL);
   ASSERT(lock_held_by_current_thread(lock));
 
-  /* Temporarily disable priority donation in lock_release
+  lock->holder = NULL;
+  // Wake up highest priority waiter
+  sema_up(&lock->semaphore);
+
   if (active_sched_policy == SCHED_PRIO) {
     struct thread* current = thread_current();
     // Disable interrupts for atomic operations
@@ -295,15 +295,6 @@ void lock_release(struct lock* lock) {
     // Remove donation related to lock
     thread_revoke_donations_for_lock(current, lock);
 
-    // Clear lock holder
-    lock->holder = NULL;
-
-    // Sort priority list after deleting donations use latest effective priority
-    sort_priority_ready_list();
-
-    // Wake up highest priority waiter
-    sema_up(&lock->semaphore);
-
     // Yield if current thread no longer has highest effective priority
     bool should_yield = !thread_has_highest_priority();
 
@@ -314,10 +305,6 @@ void lock_release(struct lock* lock) {
     }
     return;
   }
-  */
-
-  lock->holder = NULL;
-  sema_up(&lock->semaphore);
 }
 
 /* Returns true if the current thread holds LOCK, false

@@ -361,6 +361,9 @@ void thread_sort_donations(struct thread* t) {
 }
 
 struct donation* find_donation_by_donor_and_donee(struct thread* donor, struct thread* donee) {
+  if (list_empty(&donee->donations)) {
+    return NULL;
+  }
   struct list_elem* e;
   for (e = list_begin(&donee->donations); e != list_end(&donee->donations); e = list_next(e)) {
     struct donation* d = list_entry(e, struct donation, elem);
@@ -486,23 +489,19 @@ int thread_get_priority(void) { return thread_get_priority_of(thread_current());
 
 /* Returns the thread's effective priority. */
 int thread_get_priority_of(struct thread* t) {
-  /* Temporarily disable donations - just return base priority */
-  return t->priority;
-
-  /* Original donation logic:
   int base_priority = t->priority;
   if (list_empty(&t->donations)) {
     return base_priority;
   }
 
   int donated_priority =
-      list_entry(list_end(&t->donations), struct donation, elem)->donated_priority;
-  if (donated_priority > base_priority) {
+      list_entry(list_max(&t->donations, donation_priority_less, NULL), struct donation, elem)
+          ->donated_priority;
+  if (donated_priority >= base_priority) {
     return donated_priority;
   } else {
     return base_priority;
   }
-  */
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -662,9 +661,7 @@ static struct thread* thread_schedule_reserved(void) {
    empty.  (If the running thread can continue running, then it
    will be in the run queue.)  If the run queue is empty, return
    idle_thread. */
-static struct thread* next_thread_to_run(void) {
-  return (scheduler_jump_table[active_sched_policy])();
-}
+struct thread* next_thread_to_run(void) { return (scheduler_jump_table[active_sched_policy])(); }
 
 /* Completes a thread switch by activating the new thread's page
    tables, and, if the previous thread is dying, destroying it.
