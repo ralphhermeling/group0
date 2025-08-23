@@ -206,15 +206,14 @@ static void real_time_delay(int64_t num, int32_t denom) {
   busy_wait(loops_per_tick * num / 1000 * TIMER_FREQ / (denom / 1000));
 }
 
-static bool wake_time_less(const struct list_elem* a, const struct list_elem* b, void* aux) {
+static bool wake_time_less(const struct list_elem* a, const struct list_elem* b, UNUSED void* aux) {
   struct thread* thread_a = list_entry(a, struct thread, sleepelem);
   struct thread* thread_b = list_entry(b, struct thread, sleepelem);
   return thread_a->wake_time < thread_b->wake_time;
 }
 
 /* Wake threads whose time has expired */
-static void timer_wake_sleeping_threads() {
-  ASSERT(intr_get_level() == INTR_OFF);
+static void timer_wake_sleeping_threads(void) {
   int64_t ticks = timer_ticks();
   while (!list_empty(&sleep_list)) {
     struct list_elem* e = list_front(&sleep_list);
