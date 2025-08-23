@@ -43,7 +43,6 @@ void test_priority_basic(void) {
   sema_up(&start_sema);
   sema_up(&start_sema);
   sema_up(&start_sema);
-  sema_up(&start_sema);
 
   /* Wait for all threads to complete */
   int i;
