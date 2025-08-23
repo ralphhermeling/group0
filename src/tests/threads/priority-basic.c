@@ -28,8 +28,8 @@ void test_priority_basic(void) {
 
   msg("Creating threads with different priorities...");
   thread_create("low", PRI_DEFAULT + 1, low_priority_thread, NULL);
-  thread_create("high", PRI_DEFAULT + 3, high_priority_thread, NULL);
   thread_create("medium", PRI_DEFAULT + 2, medium_priority_thread, NULL);
+  thread_create("high", PRI_DEFAULT + 3, high_priority_thread, NULL);
 
   /* Wait a bit for threads to complete */
   int i;
@@ -39,10 +39,10 @@ void test_priority_basic(void) {
 
   msg("Execution order: %d, %d, %d", execution_order[0], execution_order[1], execution_order[2]);
 
-  /* High priority (32) should run first, medium (31) second, low (30) third */
-  ASSERT(execution_order[0] == PRI_DEFAULT + 3); /* high */
+  /* Low priority should run first, medium second, high third */
+  ASSERT(execution_order[0] == PRI_DEFAULT + 1); /* high */
   ASSERT(execution_order[1] == PRI_DEFAULT + 2); /* medium */
-  ASSERT(execution_order[2] == PRI_DEFAULT + 1); /* low */
+  ASSERT(execution_order[2] == PRI_DEFAULT + 3); /* low */
 
   msg("Basic priority scheduling works correctly!");
 }

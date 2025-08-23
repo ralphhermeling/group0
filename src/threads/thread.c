@@ -280,6 +280,21 @@ void thread_unblock(struct thread* t) {
   thread_enqueue(t);
   t->status = THREAD_READY;
 
+  struct thread* cur = thread_current();
+
+  int priority_unblocked_thread = thread_get_priority_of(t);
+  int priority_current_thread = thread_get_priority_of(cur);
+
+  if (priority_current_thread >= priority_unblocked_thread || active_sched_policy != SCHED_PRIO) {
+    intr_set_level(old_level);
+    return;
+  }
+
+  if (cur != idle_thread) {
+    cur->status = THREAD_READY;
+    thread_enqueue(cur);
+    schedule();
+  }
   intr_set_level(old_level);
 }
 
