@@ -41,7 +41,7 @@ The user thread has it's own:
 Instead of loading an ELF and getting an entrypoint the user provided function is the entry point.
 Arguments need to be passed onto the user thread's stack.
 
-Must allocate new virtual pages for stack in existing virtual address space from pcb. Create fixed size stacks of 4MB.
+Must allocate new virtual pages for stack in existing virtual address space from pcb. Create fixed size stacks of 1MB.
 
 When an user thread exits it shouldn't destroy the whole process like process_exit. It should deallocate the stack and destroy the mapped kernel thread.
 
@@ -89,6 +89,7 @@ If all went well add 1 to ref_count
 #### start_pthread
 Runs in kernel mode and sets up interrupt frame:
 
+allocate user stack in virtual address space
 - if_.eip = sfun (points to pthread_stub in user space)
 - Push tf and arg onto stack and stack align
 
@@ -102,6 +103,95 @@ pthread_stub(tf, arg) executes in user mode:
 - When tf returns calls pthread_exit
 
 pthread_exit system call cleans up pthread
+
+#### Allocating user thread stack
+
+### Virtual Memory Layout Strategy
+
+Layout the virtual address space to prevent stack collisions with guard pages:
+
+```
+Virtual Address Space Layout:
+
+0xC0000000 (PHYS_BASE)     ┌─────────────────┐
+                           │  Kernel Space   │
+                           └─────────────────┘
+                           
+0xBFF00000                 ┌─────────────────┐ ← Main thread stack top
+                           │ Main Thread     │   (1MB stack)
+                           │ Stack (grows ↓) │
+0xBFE00000                 ├─────────────────┤ ← Guard page
+0xBFDFF000                 │ Guard Page      │   (unmapped)
+0xBFDFE000                 └─────────────────┘
+
+0xBFD00000                 ┌─────────────────┐ ← Thread 1 stack top  
+                           │ Thread 1        │   (1MB stack)
+                           │ Stack (grows ↓) │
+0xBFC00000                 ├─────────────────┤ ← Guard page
+0xBFBFF000                 │ Guard Page      │   (unmapped)
+0xBFBFE000                 └─────────────────┘
+
+0xBFB00000                 ┌─────────────────┐ ← Thread 2 stack top
+                           │ Thread 2        │   (1MB stack)  
+                           │ Stack (grows ↓) │
+0xBFA00000                 ├─────────────────┤ ← Guard page
+0xBF9FF000                 │ Guard Page      │   (unmapped)
+0xBF9FE000                 └─────────────────┘
+                           
+                           │      ...        │
+                           
+0x08000000                 ┌─────────────────┐
+                           │ Program Code    │
+                           │ Data & Heap     │
+0x00000000                 └─────────────────┘
+```
+
+### Stack Allocation Implementation
+
+Use `list_size(&pcb->user_threads)` to determine thread index for stack placement:
+
+```c
+#define THREAD_STACK_SIZE    (1024 * 1024)      // 1MB per thread
+#define GUARD_PAGE_SIZE      (4 * 1024)         // 4KB guard page
+
+static void* allocate_user_thread_stack(struct process* pcb) {
+  lock_acquire(&pcb->threads_lock);
+  int thread_index = list_size(&pcb->user_threads);  // Get next available slot
+  lock_release(&pcb->threads_lock);
+  
+  // Calculate stack base: Main thread at index 0, user threads at index 1+
+  void* stack_base = (void*)(PHYS_BASE - 
+                            (thread_index + 1) * (THREAD_STACK_SIZE + GUARD_PAGE_SIZE));
+  
+  // Allocate physical pages for the stack
+  for (void* addr = stack_base; 
+       addr < stack_base + THREAD_STACK_SIZE; 
+       addr += PGSIZE) {
+    
+    void* kpage = palloc_get_page(PAL_USER);
+    if (kpage == NULL) {
+      deallocate_partial_stack(stack_base, addr);
+      return NULL;
+    }
+    
+    if (!pagedir_set_page(pcb->pagedir, addr, kpage, true)) {
+      palloc_free_page(kpage);
+      deallocate_partial_stack(stack_base, addr);
+      return NULL;
+    }
+  }
+  
+  // Do NOT map the guard page - leave it unmapped for overflow detection
+  
+  return stack_base + THREAD_STACK_SIZE;  // Return stack top
+}
+```
+
+### Guard Page Protection
+
+- Guard pages are left unmapped in the page directory
+- Stack overflow triggers automatic page fault when accessing unmapped guard page
+- Page fault handler in `exception.c` can detect and terminate overflowing thread
 
 ## Data Structures
 
@@ -120,7 +210,6 @@ struct process {
   /* User thread management */
   struct list user_threads;     /* List of user_thread_info structures */
   struct lock threads_lock;     /* Protects user_threads list */
-  int thread_ref_count;         /* Number of active user threads */
 };
 ```
 
@@ -130,7 +219,7 @@ New structure to track individual user thread state:
 
 ```c
 struct user_thread_info {
-  tid_t tid;                   /* Thread ID (same for kernel and pthread) */
+  thread* thread;              /* Thread */
   void* exit_value;            /* Return value from pthread_fun */
   struct semaphore exit_sema;   /* Signaled when thread exits */
   bool has_exited;             /* Thread completion status */
@@ -150,7 +239,6 @@ struct pthread_info {
   stub_fun sfun;               /* Stub function entry point */
   pthread_fun tf;              /* User thread function */
   void* arg;                   /* Argument to pthread function */
-  tid_t assigned_tid;          /* Assigned thread ID (same as kernel TID) */
   
   /* Synchronization for thread creation */
   struct semaphore load_sema;   /* Signaled when thread setup complete */
