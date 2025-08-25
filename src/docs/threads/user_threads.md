@@ -102,3 +102,58 @@ pthread_stub(tf, arg) executes in user mode:
 - When tf returns calls pthread_exit
 
 pthread_exit system call cleans up pthread
+
+## Data Structures
+
+### struct thread (threads/thread.h)
+
+No additional fields needed in struct thread. The existing `pcb` field already points to the shared process control block.
+
+### struct process (userprog/process.h)
+
+Add the following fields to track user threads:
+
+```c
+struct process {
+  // ... existing fields ...
+  
+  /* User thread management */
+  struct list user_threads;     /* List of user_thread_info structures */
+  struct lock threads_lock;     /* Protects user_threads list */
+  int thread_ref_count;         /* Number of active user threads */
+};
+```
+
+### struct user_thread_info (userprog/process.h)
+
+New structure to track individual user thread state:
+
+```c
+struct user_thread_info {
+  tid_t tid;                   /* Thread ID (same for kernel and pthread) */
+  void* exit_value;            /* Return value from pthread_fun */
+  struct semaphore exit_sema;   /* Signaled when thread exits */
+  bool has_exited;             /* Thread completion status */
+  bool joined;                 /* Has someone already joined this thread? */
+  tid_t joiner_tid;            /* Which thread is joining (for debugging) */
+  struct list_elem elem;       /* For PCB's user_threads list */
+};
+```
+
+### struct pthread_info (userprog/process.h)
+
+Structure passed to start_pthread containing thread creation parameters:
+
+```c
+struct pthread_info {
+  struct process* parent_pcb;   /* PCB to share with new thread */
+  stub_fun sfun;               /* Stub function entry point */
+  pthread_fun tf;              /* User thread function */
+  void* arg;                   /* Argument to pthread function */
+  tid_t assigned_tid;          /* Assigned thread ID (same as kernel TID) */
+  
+  /* Synchronization for thread creation */
+  struct semaphore load_sema;   /* Signaled when thread setup complete */
+  bool load_success;           /* Whether thread creation succeeded */
+};
+```
