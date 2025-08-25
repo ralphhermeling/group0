@@ -24,12 +24,15 @@
 
 #define MAX_ARGS 32
 #define MAX_PROGRAM_NAME_LENGTH 64
+#define THREAD_STACK_SIZE (1024 * 1024) // 1MB per thread
+#define GUARD_PAGE_SIZE (4 * 1024)      // 4KB guard page
 
 static thread_func start_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
 bool setup_thread(void (**eip)(void), void** esp);
-static void* allocate_user_thread_stack(struct process* pcb);
+static bool user_thread_allocate_stack(struct process* pcb, int user_thread_index, void** esp);
+static void deallocate_partial_stack(struct process* pcb, void* stack_base, void* failed_addr);
 struct process_load_info {
   char* file_name;             /* Command line to execute */
   struct semaphore* load_sema; /* Synchronization for load completion */
@@ -38,10 +41,11 @@ struct process_load_info {
   struct process* child_pcb;   /* Child's process structure (set by child) */
 };
 struct user_thread_load_info {
-  struct process* pcb; /* PCB to share with new thread */
-  stub_fun sfun;       /* Stub function entry point */
-  pthread_fun tf;      /* User thread function */
-  void* arg;           /* Argument to pthread function */
+  struct process* pcb;   /* PCB to share with new thread */
+  stub_fun sfun;         /* Stub function entry point */
+  pthread_fun tf;        /* User thread function */
+  void* arg;             /* Argument to pthread function */
+  int user_thread_index; /* User thread index used to allocate stack within pagedir */
 
   /* Synchronization for thread creation */
   struct semaphore* load_sema; /* Signaled when thread setup completes */
@@ -65,7 +69,7 @@ struct child_info* create_child_info(pid_t pid) {
   return new_child_info;
 }
 
-static struct user_thread_info* create_user_thread_info(tid_t tid) {
+static struct user_thread_info* user_thread_info_create(tid_t tid) {
   struct user_thread_info* info = malloc(sizeof(struct user_thread_info));
   if (info == NULL) {
     return NULL;
@@ -964,6 +968,45 @@ static bool install_page(void* upage, void* kpage, bool writable) {
           pagedir_set_page(t->pcb->pagedir, upage, kpage, writable));
 }
 
+/* Helper function for cleanup during stack allocation failure */
+static void deallocate_partial_stack(struct process* pcb, void* stack_base, void* failed_addr) {
+  for (void* addr = stack_base; addr < failed_addr; addr += PGSIZE) {
+    void* kpage = pagedir_get_page(pcb->pagedir, addr);
+    if (kpage != NULL) {
+      pagedir_clear_page(pcb->pagedir, addr); /* Unmap from page directory */
+      palloc_free_page(kpage);                /* Free physical page */
+    }
+  }
+}
+
+UNUSED bool user_thread_allocate_stack(struct process* pcb, int user_thread_index, void** esp) {
+  // Calculate stack base: Main thread at index 0, user threads at index 1+
+  void* stack_base =
+      (void*)(PHYS_BASE - (user_thread_index + 1) * (THREAD_STACK_SIZE + GUARD_PAGE_SIZE));
+
+  // Allocate physical pages for the stack
+  void* current_addr = stack_base;
+  for (; current_addr < stack_base + THREAD_STACK_SIZE; current_addr += PGSIZE) {
+    void* kpage = palloc_get_page(PAL_USER);
+    if (kpage == NULL) {
+      // Cleanup: unmap and free all previously allocated pages
+      deallocate_partial_stack(pcb, stack_base, current_addr);
+      return false;
+    }
+
+    if (!pagedir_set_page(pcb->pagedir, current_addr, kpage, true)) {
+      palloc_free_page(kpage); // Free the page we just allocated
+      deallocate_partial_stack(pcb, stack_base, current_addr);
+      return false;
+    }
+  }
+
+  // Do NOT map the guard page - leave it unmapped for overflow detection
+
+  *esp = stack_base + THREAD_STACK_SIZE; // point esp* to stack top
+  return true;
+}
+
 /* Returns true if t is the main thread of the process p */
 bool is_main_thread(struct thread* t, struct process* p) { return p->main_thread == t; }
 
@@ -1008,6 +1051,7 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
 
   struct lock* u_threads_lock = &thread_current()->pcb->u_threads_lock;
   lock_acquire(u_threads_lock);
+  info.user_thread_index = list_size(&thread_current()->pcb->u_threads);
 
   tid_t tid = thread_create(standard_user_thread_name, PRI_DEFAULT, start_pthread, &info);
   if (tid == TID_ERROR) {
@@ -1022,7 +1066,7 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
     free(standard_user_thread_name);
     return TID_ERROR;
   }
-  struct user_thread_info* user_thread_info = create_user_thread_info(tid);
+  struct user_thread_info* user_thread_info = user_thread_info_create(tid);
   if (user_thread_info == NULL) {
     lock_release(u_threads_lock);
     free(standard_user_thread_name);
@@ -1035,13 +1079,52 @@ tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
   return tid;
 }
 
+static void user_thread_setup_intr_frame(UNUSED void** esp, UNUSED stub_fun fun,
+                                         UNUSED struct intr_frame* if_) {
+  // Setup interrupt frame
+}
+
+static void load_args_user_thread(UNUSED pthread_fun tf, UNUSED void** esp) {
+  // Push tf and args on stack
+}
+
 /* A thread function that creates a new user thread and starts it
    running. Responsible for adding itself to the list of threads in
    the PCB.
 
    This function will be implemented in Project 2: Multithreading and
    should be similar to start_process (). For now, it does nothing. */
-static void start_pthread(void* exec_ UNUSED) {}
+static void start_pthread(void* info) {
+  struct user_thread_load_info* user_thread_load_info = info;
+  ASSERT(user_thread_load_info != NULL);
+
+  thread_current()->pcb = user_thread_load_info->pcb;
+
+  void* esp;
+
+  bool stack_allocate_success = user_thread_allocate_stack(
+      thread_current()->pcb, user_thread_load_info->user_thread_index, &esp);
+  if (!stack_allocate_success) {
+    user_thread_load_info->load_success = false;
+    sema_up(user_thread_load_info->load_sema);
+    thread_exit();
+  }
+
+  load_args_user_thread(user_thread_load_info->tf, &esp);
+  sema_up(user_thread_load_info->load_sema);
+
+  struct intr_frame if_;
+  user_thread_setup_intr_frame(&esp, user_thread_load_info->sfun, &if_);
+
+  /* Start the user process by simulating a return from an
+     interrupt, implemented by intr_exit (in
+     threads/intr-stubs.S).  Because intr_exit takes all of its
+     arguments on the stack in the form of a `struct intr_frame',
+     we just point the stack pointer (%esp) to our stack frame
+     and jump to it. */
+  asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&if_) : "memory");
+  NOT_REACHED();
+}
 
 /* Waits for thread with TID to die, if that thread was spawned
    in the same process and has not been waited on yet. Returns TID on
