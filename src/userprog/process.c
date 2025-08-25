@@ -29,12 +29,23 @@ static thread_func start_process NO_RETURN;
 static thread_func start_pthread NO_RETURN;
 static bool load(const char* file_name, void (**eip)(void), void** esp);
 bool setup_thread(void (**eip)(void), void** esp);
+static void* allocate_user_thread_stack(struct process* pcb);
 struct process_load_info {
   char* file_name;             /* Command line to execute */
   struct semaphore* load_sema; /* Synchronization for load completion */
   bool* load_success;          /* Whether load succeeded */
   struct process* parent_pcb;  /* Parent's process structure */
   struct process* child_pcb;   /* Child's process structure (set by child) */
+};
+struct user_thread_load_info {
+  struct process* pcb; /* PCB to share with new thread */
+  stub_fun sfun;       /* Stub function entry point */
+  pthread_fun tf;      /* User thread function */
+  void* arg;           /* Argument to pthread function */
+
+  /* Synchronization for thread creation */
+  struct semaphore* load_sema; /* Signaled when thread setup completes */
+  bool* load_success;          /* Whether thread creation succeeded */
 };
 
 /* Allocate and initialize child_info */
@@ -52,6 +63,20 @@ struct child_info* create_child_info(pid_t pid) {
   new_child_info->pcb = NULL;
 
   return new_child_info;
+}
+
+static struct user_thread_info* create_user_thread_info(tid_t tid) {
+  struct user_thread_info* info = malloc(sizeof(struct user_thread_info));
+  if (info == NULL) {
+    return NULL;
+  }
+  info->tid = tid;
+  sema_init(&info->exit_sema, 0);
+  info->exit_value = -1;
+  info->has_exited = false;
+  info->has_joined = false;
+  info->joiner_tid = -1;
+  return info;
 }
 
 /* Free child_info structure */
@@ -434,25 +459,30 @@ void process_exit(void) {
      resides in process' pagedir */
   lock_acquire(&cur->pcb->u_threads_lock);
 
+  /* Avoid race conditions when removing threads from all threads list */
+  enum intr_level old_level = intr_disable();
+
   while (!list_empty(&cur->pcb->u_threads)) {
     struct list_elem* e = list_pop_back(&cur->pcb->u_threads);
     struct user_thread_info* thread_info = list_entry(e, struct user_thread_info, elem);
 
+    struct thread* thread = thread_get_by_tid(thread_info->tid);
     /* For threads that aren't the current thread, force cleanup */
-    if (thread_info->thread != cur && !thread_info->has_exited) {
+    if (thread != NULL && thread != cur && !thread_info->has_exited) {
       /* Remove from scheduler queues or semaphore's waiter list if needed */
-      if (thread_info->thread->status == THREAD_READY ||
-          thread_info->thread->status == THREAD_BLOCKED) {
-        list_remove(&thread_info->thread->elem);
+      if (thread->status == THREAD_READY || thread->status == THREAD_BLOCKED) {
+        list_remove(&thread->elem);
       }
 
-      /* Manually free thread's kernel stack and structure */
-      palloc_free_page(thread_info->thread);
+      list_remove(&thread->allelem);
+      palloc_free_page(thread);
     }
 
     /* Free tracking structure */
     free(thread_info);
   }
+
+  intr_set_level(old_level);
 
   lock_release(&cur->pcb->u_threads_lock);
 
@@ -955,11 +985,55 @@ bool setup_thread(void (**eip)(void) UNUSED, void** esp UNUSED) { return false; 
    scheduled (and may even exit) before pthread_execute () returns.
    Returns the new thread's TID or TID_ERROR if the thread cannot
    be created properly.
-
-   This function will be implemented in Project 2: Multithreading and
-   should be similar to process_execute (). For now, it does nothing.
    */
-tid_t pthread_execute(stub_fun sf UNUSED, pthread_fun tf UNUSED, void* arg UNUSED) { return -1; }
+tid_t pthread_execute(stub_fun sf, pthread_fun tf, void* arg) {
+  struct user_thread_load_info info;
+
+  /* Initialize user thread load info struct */
+  struct semaphore load_sema;
+  sema_init(&load_sema, 0);
+  bool load_succes = 0;
+  info.load_success = &load_succes;
+  info.load_sema = &load_sema;
+  info.pcb = thread_current()->pcb;
+  info.sfun = sf;
+  info.arg = arg;
+  info.tf = tf;
+
+  char* standard_user_thread_name = malloc(sizeof(char*));
+  if (standard_user_thread_name == NULL) {
+    return TID_ERROR;
+  }
+  strlcpy(standard_user_thread_name, "user thread", 12);
+
+  struct lock* u_threads_lock = &thread_current()->pcb->u_threads_lock;
+  lock_acquire(u_threads_lock);
+
+  tid_t tid = thread_create(standard_user_thread_name, PRI_DEFAULT, start_pthread, &info);
+  if (tid == TID_ERROR) {
+    free(standard_user_thread_name);
+    return TID_ERROR;
+  }
+
+  sema_down(&load_sema);
+
+  if (!load_succes) {
+    lock_release(u_threads_lock);
+    free(standard_user_thread_name);
+    return TID_ERROR;
+  }
+  struct user_thread_info* user_thread_info = create_user_thread_info(tid);
+  if (user_thread_info == NULL) {
+    lock_release(u_threads_lock);
+    free(standard_user_thread_name);
+    return TID_ERROR;
+  }
+
+  list_push_back(&thread_current()->pcb->u_threads, &user_thread_info->elem);
+  lock_release(u_threads_lock);
+
+  return tid;
+}
 
 /* A thread function that creates a new user thread and starts it
    running. Responsible for adding itself to the list of threads in

@@ -53,7 +53,7 @@ struct child_info {
 
 /* Track process' user threads completion, exit and joining state */
 struct user_thread_info {
-  struct thread* thread;      /* Mapped kernel thread */
+  tid_t tid;                  /* Thread id of mapped kernel thread */
   int exit_value;             /* The value that the target thread supplied to pthread_exit(3) */
   struct semaphore exit_sema; /* Signaled when thread exits */
   bool has_exited;            /* Thread completion status */
