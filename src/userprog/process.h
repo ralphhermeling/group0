@@ -36,6 +36,8 @@ struct process {
   struct list open_files;       /* List of open file descriptors for this process */
   int next_fd;                  /* Next available file descriptor number */
   struct file* executable_file; /* Pointer to process's executable file (for write protection) */
+  struct list u_threads;        /* List of user_thread_info for process's user threads */
+  struct lock u_threads_lock;   /* Protects operations on u_thread */
 };
 
 /* New structure for tracking child processes */
@@ -47,6 +49,17 @@ struct child_info {
   struct semaphore exit_sema; /* Signaled when child exits */
   struct list_elem elem;      /* List element for parent's children list */
   struct process* pcb;        /* Direct pointer to child's process structure */
+};
+
+/* Track process' user threads completion, exit and joining state */
+struct user_thread_info {
+  struct thread* thread;      /* Mapped kernel thread */
+  int exit_value;             /* The value that the target thread supplied to pthread_exit(3) */
+  struct semaphore exit_sema; /* Signaled when thread exits */
+  bool has_exited;            /* Thread completion status */
+  bool joined;                /* Has someone already joined this thread? */
+  tid_t joiner_tid;           /* Which thread is joining (for debugging) */
+  struct list_elem elem;      /* For PCB's user_threads list */
 };
 
 void userprog_init(void);

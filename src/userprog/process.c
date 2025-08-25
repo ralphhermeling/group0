@@ -81,6 +81,10 @@ void userprog_init(void) {
   list_init(&t->pcb->children);
   t->pcb->parent_pcb = NULL;
   t->pcb->exit_status = -1;
+
+  /* Initialize user thread tracking info */
+  lock_init(&t->pcb->u_threads_lock);
+  list_init(&t->pcb->u_threads);
 }
 
 /* Starts a new thread running a user program loaded from
@@ -233,6 +237,10 @@ static void start_process(void* load_info) {
     info->child_pcb = new_pcb;
     new_pcb->exit_status = -1;
     list_init(&new_pcb->open_files);
+
+    /* Initialize user thread tracking infrastructure */
+    list_init(&new_pcb->u_threads);
+    lock_init(&new_pcb->u_threads_lock);
 
     // Continue initializing the PCB as normal
     new_pcb->next_fd = FIRST_FILE_FD;
