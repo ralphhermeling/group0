@@ -172,4 +172,6 @@ void thread_sort_donations(struct thread* t);
 void thread_revoke_made_donations(struct thread* t);
 void thread_revoke_received_donations(struct thread* t);
 void sort_priority_ready_list(void);
+
+struct thread* thread_get_by_tid(tid_t tid);
 #endif /* threads/thread.h */

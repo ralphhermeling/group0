@@ -444,6 +444,23 @@ void thread_yield(void) {
   intr_set_level(old_level);
 }
 
+struct thread* thread_get_by_tid(tid_t tid) {
+  enum intr_level old_level = intr_disable();
+  struct list_elem* e;
+
+  struct thread* found_thread = NULL;
+  for (e = list_begin(&all_list); e != list_end(&all_list); e = list_next(e)) {
+    struct thread* t = list_entry(e, struct thread, allelem);
+    if (t->tid == tid) {
+      found_thread = t;
+      break;
+    }
+  }
+
+  intr_set_level(old_level);
+  return found_thread;
+}
+
 /* Invoke function 'func' on all threads, passing along 'aux'.
    This function must be called with interrupts off. */
 void thread_foreach(thread_action_func* func, void* aux) {
