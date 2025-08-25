@@ -429,6 +429,33 @@ void process_exit(void) {
   /* Destroy file descriptor table */
   destroy_file_descriptor_table(cur->pcb);
 
+  /* Destroy user threads mapped kernel threads and 
+     destroy user thread tracking info. The user threads' stack 
+     resides in process' pagedir */
+  lock_acquire(&cur->pcb->u_threads_lock);
+
+  while (!list_empty(&cur->pcb->u_threads)) {
+    struct list_elem* e = list_pop_back(&cur->pcb->u_threads);
+    struct user_thread_info* thread_info = list_entry(e, struct user_thread_info, elem);
+
+    /* For threads that aren't the current thread, force cleanup */
+    if (thread_info->thread != cur && !thread_info->has_exited) {
+      /* Remove from scheduler queues or semaphore's waiter list if needed */
+      if (thread_info->thread->status == THREAD_READY ||
+          thread_info->thread->status == THREAD_BLOCKED) {
+        list_remove(&thread_info->thread->elem);
+      }
+
+      /* Manually free thread's kernel stack and structure */
+      palloc_free_page(thread_info->thread);
+    }
+
+    /* Free tracking structure */
+    free(thread_info);
+  }
+
+  lock_release(&cur->pcb->u_threads_lock);
+
   /* Free the PCB of this process and kill this thread
      Avoid race where PCB is freed before t->pcb is set to NULL
      If this happens, then an unfortuantely timed timer interrupt

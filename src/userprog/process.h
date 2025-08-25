@@ -57,7 +57,7 @@ struct user_thread_info {
   int exit_value;             /* The value that the target thread supplied to pthread_exit(3) */
   struct semaphore exit_sema; /* Signaled when thread exits */
   bool has_exited;            /* Thread completion status */
-  bool joined;                /* Has someone already joined this thread? */
+  bool has_joined;            /* Has someone already joined this thread? */
   tid_t joiner_tid;           /* Which thread is joining (for debugging) */
   struct list_elem elem;      /* For PCB's user_threads list */
 };

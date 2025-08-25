@@ -282,3 +282,7 @@ Based on our discussion, here's the comprehensive plan to implement 1-1 user thr
 
 The 1-1 mapping simplifies implementation by leveraging existing kernel thread infrastructure for CPU state management while only requiring user stack allocation and proper 
 interrupt frame setup.
+
+## process_exit
+
+Add clean up of user_thread_info list and destroy user mapped kernel threads
