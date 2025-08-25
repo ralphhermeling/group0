@@ -245,3 +245,40 @@ struct pthread_info {
   bool load_success;           /* Whether thread creation succeeded */
 };
 ```
+
+## Plan to implement basic user threading
+
+Based on our discussion, here's the comprehensive plan to implement 1-1 user threading:
+
+1. Data Structure Updates
+
+- Add user thread tracking fields to struct process
+- Define struct user_thread_info for thread state management
+- Define struct pthread_info for thread creation parameters
+
+2. Stack Management Implementation
+
+- Implement allocate_user_thread_stack() with 1MB stacks + guard pages
+- Use virtual memory layout starting from PHYS_BASE with proper spacing
+- Implement cleanup function deallocate_thread_stack()
+
+3. Core Threading Functions
+
+- Implement pthread_execute() - kernel entry point for thread creation
+- Implement start_pthread() - sets up interrupt frame and jumps to user mode
+- Add pthread system calls: sys_pthread_create, sys_pthread_exit, sys_pthread_join
+
+4. Synchronization & Cleanup
+
+- Use semaphores for pthread_join synchronization
+- Implement reference counting for PCB cleanup
+- Handle thread exit vs process exit correctly
+
+5. Integration Points
+
+- Update syscall handler to include new pthread syscalls
+- Ensure process_activate() works correctly for shared address spaces
+- Update process cleanup to handle remaining threads
+
+The 1-1 mapping simplifies implementation by leveraging existing kernel thread infrastructure for CPU state management while only requiring user stack allocation and proper 
+interrupt frame setup.
